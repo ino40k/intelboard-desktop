@@ -10,6 +10,7 @@ import { boardSchema } from '../shared/schema.js';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 protocol.registerSchemesAsPrivileged([{scheme:'intelboard',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true,corsEnabled:true}}]);
 app.setName('IntelBoard');
+if (process.platform === 'win32') app.setAppUserModelId('org.intelboard.desktop');
 app.enableSandbox();
 // Automated smoke runs use disposable storage and a hidden window; never touch a real workspace.
 const smoke=process.env.INTELBOARD_SMOKE_DIR;

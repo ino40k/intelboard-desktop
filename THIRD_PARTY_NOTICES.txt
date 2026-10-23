@@ -1,6 +1,7 @@
 IntelBoard third-party notices
 
 Electron/Chromium license files are also distributed beside the application.
+Each release provides a dependency-sources.zip companion with native-library source archives, patches and recipes. licenses/native-sources.json records the source URLs and SHA-256 checksums. You may replace the dynamically loaded native libraries and debug such modifications under their licenses.
 Sharp/libvips carries LGPL components; see node_modules/@img/sharp-libvips-*/versions.json and README.md in the packaged app for exact library versions and source project links.
 
 GNU LESSER GENERAL PUBLIC LICENSE

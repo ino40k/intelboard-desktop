@@ -16,6 +16,7 @@ export async function runSmoke(window, service, dir) {
     throw new Error('Timed out: '+code+'; body: '+await js('document.body.innerText'));
   }
   await wait('!!document.querySelector(".library, .workspace")');
+  console.log('smoke: workspace loaded');
   assert.equal(await js('typeof window.require'),'undefined');
   assert.equal(await js('typeof window.intelboard.request'),'function');
   // Offline local resources, native bridge and actual React UI.
@@ -30,9 +31,11 @@ export async function runSmoke(window, service, dir) {
     await js(`document.querySelector('[aria-label="Add note (N)"]').click()`);
     await wait('!!document.querySelector("[contenteditable=true]")');
     await js(`document.querySelector('[contenteditable=true]').focus()`);
+    console.log('smoke: note editor focused');
 
     for (const character of 'Synthetic offline note') {
       await window.webContents.insertText(character);
+      if(character==='S') console.log('smoke: first character inserted');
       const caret = await js(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
         const e=document.querySelector('[contenteditable=true]'),s=getSelection(),r=s.getRangeAt(0).cloneRange();
         r.selectNodeContents(e);r.setEnd(s.anchorNode,s.anchorOffset);

@@ -77,9 +77,29 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.sha256
+  dependency-sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/dependency-sources.py
+      - run: node scripts/checksums.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IntelBoard-dependency-sources
+          if-no-files-found: error
+          path: |
+            release/*-dependency-sources.zip
+            release/*-dependency-sources.zip.sha256
   attach-release:
     if: github.event_name == 'release'
-    needs: build
+    needs: [build, dependency-sources]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
