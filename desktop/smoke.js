@@ -13,7 +13,7 @@ export async function runSmoke(window, service, dir) {
   async function wait(code) {
     const deadline=Date.now()+10000;
     while(Date.now()<deadline){if(await js(code))return;await new Promise(r=>setTimeout(r,100));}
-    throw new Error('Timed out: '+code+'; body: '+await js('document.body.innerText'));
+    throw new Error('Timed out: '+code+'; body: '+await js('document.body.innerText')+'; reader frames: '+JSON.stringify(await js(`Array.from(document.querySelectorAll('.epub-viewport iframe')).map(f=>({width:f.clientWidth,height:f.clientHeight,visibility:getComputedStyle(f).visibility,state:f.contentDocument?.readyState,text:f.contentDocument?.body?.innerText}))`))+'; renderer errors: '+errors.join(' | '));
   }
   await wait('!!document.querySelector(".library, .workspace")');
   console.log('smoke: workspace loaded');
@@ -75,7 +75,10 @@ export async function runSmoke(window, service, dir) {
   if(service.store.get(board.id).nodes.length===1) {
     await js(`document.querySelector('[aria-label="Add note (N)"]').click()`);
     await wait(`document.querySelectorAll('.react-flow__node').length===2`);
-    await js(`document.activeElement.blur()`);
+    await wait(`!!document.querySelector('[contenteditable=true]')`);
+    // Exit text editing explicitly before exercising canvas-level Undo/Redo.
+    await js(`document.querySelector('[contenteditable=true]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`);
+    await wait(`!document.querySelector('[contenteditable=true]')`);
     Menu.getApplicationMenu().getMenuItemById('undo').click();
     await wait(`document.querySelectorAll('.react-flow__node').length===1`);
     Menu.getApplicationMenu().getMenuItemById('redo').click();
