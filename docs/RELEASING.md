@@ -30,8 +30,8 @@ git tag v1.0.0
 git push origin main v1.0.0
 ```
 
-5. The tag build uploads private-to-repository Actions artifacts for validation; it does not create a release. Inspect both OS results and perform acceptance tests.
-6. Explicitly publish a GitHub Release for the matching tag. The release event rebuilds both platforms and attaches the installer/AppImage after both matrix jobs pass. Allow the workflow time to finish. Download the final files and verify checksums before sharing them.
+5. The tag build uploads repository Actions artifacts for validation; it does not create a release. Inspect both OS results and perform acceptance tests. A public repository's build artifacts and logs are also public.
+6. Explicitly publish a GitHub Release for the matching tag. The release event rebuilds both platforms, generates the pinned native dependency source archive, and attaches the installers, source archive and SHA-256 checksums after all jobs pass. Allow the workflow time to finish. Download the final files and verify checksums before sharing them.
 
 CI uses `--publish never` for packaging. The only external upload of installers is the separate release-attachment job, which runs only for an explicitly published release. A failed build leaves the release without complete attachments; fix it and rerun rather than assuming a release page means successful binaries.
 

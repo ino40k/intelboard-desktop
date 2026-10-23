@@ -54,15 +54,15 @@ npm run package:linux   # Fedora/Linux: release/*.AppImage
 npm run package:win     # Windows: release/*.exe
 ```
 
-`npm run test:desktop` runs a hidden Electron window with synthetic, temporary data and tests persistence across two process launches. Linux CI uses Xvfb. It never opens a real workspace. See [validation](docs/VALIDATION.md) for coverage and remaining manual checks.
+`npm run test:desktop` uses synthetic, temporary data and tests persistence across two process launches. Local tests run in a hidden window; Linux CI uses Xvfb, and Windows CI uses its disposable runner desktop. Windows CI also installs the NSIS installer, tests the installed application, and uninstalls it. Tests never open a real workspace. See [validation](docs/VALIDATION.md) for coverage and remaining manual checks.
 
 `npm run audit:release` inspects the Git-tracked source, built frontend and any unpacked application archive. Review its output before distributing a new build. Build outputs and local application data are ignored by Git.
 
 ## Releases
 
-GitHub Actions builds Windows and Linux on their own hosted runners for pull requests, main branch changes, version tags and manual runs. Download the resulting build artifacts for testing. Publishing a GitHub release explicitly triggers both builds and attaches the `.exe` and `.AppImage` after validation. Tag pushes alone do not publish a release. No external service, signing secret or auto-update server is required.
+GitHub Actions builds Windows and Linux on their own hosted runners for pull requests, main branch changes, version tags and manual runs. Download the resulting build artifacts for testing. Publishing a GitHub release explicitly triggers both builds and attaches the `.exe`, `.AppImage`, native dependency source archive and SHA-256 checksums after validation. Tag pushes alone do not publish a release. No external service, signing secret or auto-update server is required.
 
-Follow [RELEASING.md](docs/RELEASING.md) for versioning, repository setup and the publication approval boundary. Source and releases are hosted at [ino40k/intelboard-desktop](https://github.com/ino40k/intelboard-desktop).
+Follow [RELEASING.md](docs/RELEASING.md) for versioning, repository setup and publication. Source and releases are hosted at [ino40k/intelboard-desktop](https://github.com/ino40k/intelboard-desktop).
 
 ## Architecture and license
 

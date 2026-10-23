@@ -101,7 +101,7 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
         },
         img: { 'max-width': '100%', height: 'auto' },
       });
-      r.on('relocated', (loc: Location) => {
+      const updateLocation = (loc: Location) => {
         if (!active) return;
         setLocation(loc);
         const cfi = loc.start.cfi;
@@ -110,7 +110,8 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
           latest.current.onChange({ ...latest.current.position, cfi });
           saveRelocation.current = false;
         }
-      });
+      };
+      r.on('relocated', updateLocation);
       r.hooks.content.register((contents: { document: Document }) => {
         contents.document.addEventListener(
           'click',
@@ -136,6 +137,13 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
       setChapters(toc);
       await r.display(latest.current.position.cfi).catch(() => r.display());
       if (active) {
+        // EPUB.js reports relocation on a later animation frame. Desktop window
+        // visibility changes can delay that event after the chapter has rendered.
+        // Read the rendered location directly so the initial label and saved CFI
+        // do not depend on that extra frame. EPUB.js types describe a single
+        // endpoint here, but its default manager returns the full Location.
+        const initialLocation = await Promise.resolve(r.currentLocation() as unknown as Location);
+        if (initialLocation?.start?.cfi && initialLocation?.end?.cfi) updateLocation(initialLocation);
         setReady(true);
         clearTimeout(timeout);
       }
