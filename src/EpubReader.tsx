@@ -22,6 +22,7 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
     if (!ref.current) return;
     let active = true;
     let book: Book | undefined;
+    let locationTimer: ReturnType<typeof setInterval> | undefined;
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       if (active) latest.current.onError();
@@ -103,6 +104,8 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
       });
       const updateLocation = (loc: Location) => {
         if (!active) return;
+        clearInterval(locationTimer);
+        locationTimer = undefined;
         setLocation(loc);
         const cfi = loc.start.cfi;
         if (cfi && (saveRelocation.current || !lastCfi.current) && cfi !== lastCfi.current) {
@@ -137,13 +140,18 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
       setChapters(toc);
       await r.display(latest.current.position.cfi).catch(() => r.display());
       if (active) {
-        // EPUB.js reports relocation on a later animation frame. Desktop window
-        // visibility changes can delay that event after the chapter has rendered.
-        // Read the rendered location directly so the initial label and saved CFI
-        // do not depend on that extra frame. EPUB.js types describe a single
-        // endpoint here, but its default manager returns the full Location.
-        const initialLocation = await Promise.resolve(r.currentLocation() as unknown as Location);
-        if (initialLocation?.start?.cfi && initialLocation?.end?.cfi) updateLocation(initialLocation);
+        // EPUB.js can report an empty location while React Flow is measuring
+        // the card, then omit the initial relocation event. Reconcile from the
+        // rendered page while layout settles, stopping on the first location.
+        // Its types describe an endpoint; the default manager returns Location.
+        let attempts = 0;
+        const refreshLocation = () => {
+          const loc = r.currentLocation() as unknown as Location;
+          if (loc?.start?.cfi && loc?.end?.cfi) updateLocation(loc);
+          else if (++attempts >= 30) clearInterval(locationTimer);
+        };
+        locationTimer = setInterval(refreshLocation, 100);
+        refreshLocation();
         setReady(true);
         clearTimeout(timeout);
       }
@@ -153,6 +161,7 @@ export function EpubReader({ url, position, onChange, checkpoint, onError }: Rea
     return () => {
       active = false;
       clearTimeout(timeout);
+      clearInterval(locationTimer);
       controller.abort();
       rendition.current = undefined;
       book?.destroy();

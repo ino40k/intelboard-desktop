@@ -13,7 +13,7 @@ export async function runSmoke(window, service, dir) {
   async function wait(code) {
     const deadline=Date.now()+10000;
     while(Date.now()<deadline){if(await js(code))return;await new Promise(r=>setTimeout(r,100));}
-    throw new Error('Timed out: '+code+'; body: '+await js('document.body.innerText')+'; reader frames: '+JSON.stringify(await js(`Array.from(document.querySelectorAll('.epub-viewport iframe')).map(f=>({width:f.clientWidth,height:f.clientHeight,visibility:getComputedStyle(f).visibility,state:f.contentDocument?.readyState,text:f.contentDocument?.body?.innerText}))`))+'; renderer errors: '+errors.join(' | '));
+    throw new Error('Timed out: '+code+'; body: '+await js('document.body.innerText')+'; reader frames: '+JSON.stringify(await js(`Array.from(document.querySelectorAll('.epub-viewport, .epub-container, .epub-view, .epub-viewport iframe')).map(f=>({tag:f.tagName,cls:f.className,rect:f.getBoundingClientRect().toJSON(),visibility:getComputedStyle(f).visibility,state:f.contentDocument?.readyState,text:f.contentDocument?.body?.innerText}))`))+'; renderer errors: '+errors.join(' | '));
   }
   await wait('!!document.querySelector(".library, .workspace")');
   console.log('smoke: workspace loaded');
