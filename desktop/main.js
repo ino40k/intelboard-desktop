@@ -14,7 +14,7 @@ if (process.platform === 'win32') app.setAppUserModelId('org.intelboard.desktop'
 app.enableSandbox();
 // Automated smoke runs use disposable storage and a hidden window; never touch a real workspace.
 const smoke=process.env.INTELBOARD_SMOKE_DIR;
-if(smoke) app.setPath('userData',path.resolve(smoke));
+if(smoke) { app.setPath('userData',path.resolve(smoke)); app.disableHardwareAcceleration(); }
 if(!app.requestSingleInstanceLock()) app.quit();
 else {
   let window,service,transferBusy=false,quitting=false;
@@ -80,6 +80,7 @@ else {
     const settings=path.join(data,'window.json');
     try { const saved=JSON.parse(readFileSync(settings,'utf8'));if(saved.width>=800&&saved.width<=7680&&saved.height>=600&&saved.height<=4320)bounds={width:saved.width,height:saved.height}; } catch { }
     window=new BrowserWindow({...bounds,minWidth:800,minHeight:600,show:false,title:'IntelBoard',backgroundColor:'#17191c',icon:path.join(root,'build/icon.png'),webPreferences:{offscreen:!!smoke,backgroundThrottling:!smoke,preload:path.join(root,'desktop/preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true,spellcheck:true}});
+    if(smoke) { window.webContents.on('paint',()=>{}); window.webContents.setFrameRate(30); window.webContents.startPainting(); }
     window.on('ready-to-show',()=>{if(!smoke)window.show();});
     window.on('close',event=>{
       if(transferBusy){event.preventDefault();return;}

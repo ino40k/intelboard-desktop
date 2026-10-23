@@ -66,6 +66,10 @@ jobs:
         run: npm run test:desktop
         env:
           INTELBOARD_TEST_BINARY: ./release/win-unpacked/IntelBoard.exe
+      - name: Windows installer acceptance
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-install.ps1
       - name: Audit staged source and packaged application
         run: npm run audit:release
       - run: node scripts/checksums.js

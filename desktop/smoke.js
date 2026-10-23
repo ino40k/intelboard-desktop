@@ -36,11 +36,14 @@ export async function runSmoke(window, service, dir) {
     for (const character of 'Synthetic offline note') {
       await window.webContents.insertText(character);
       if(character==='S') console.log('smoke: first character inserted');
-      const caret = await js(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      // A fully hidden Windows window may pause animation frames. Wait on the
+      // main-process clock so the caret assertion still runs after React updates.
+      await new Promise(resolve=>setTimeout(resolve,60));
+      const caret = await js(`(()=>{
         const e=document.querySelector('[contenteditable=true]'),s=getSelection(),r=s.getRangeAt(0).cloneRange();
         r.selectNodeContents(e);r.setEnd(s.anchorNode,s.anchorOffset);
-        resolve({text:e.textContent,offset:r.toString().length});
-      })))`);
+        return {text:e.textContent,offset:r.toString().length};
+      })()`);
       assert.equal(caret.offset,caret.text.length,'Typing must leave the cursor after the inserted character: '+JSON.stringify(caret));
     }
     // Emptying an existing editor must not bring the first-character bug back.
