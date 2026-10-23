@@ -1,0 +1,39 @@
+--- a/src/InlineText.tsx
++++ b/src/InlineText.tsx
+@@ -145,6 +145,10 @@
+     );
+     setActive(covered.length ? covered.reduce((mask, r) => mask & r.style, 7) : 0);
+   };
++  // A missing/default format array is a new object on every local selection
++  // render. Sync only when prop content changes, so a render with the parent's
++  // previous text cannot overwrite a keystroke before its update arrives.
++  const formatKey = JSON.stringify(format);
+   useLayoutEffect(() => {
+     const element = root.current!;
+     const incoming = { text: value, format: formatRuns(value, format).filter((r) => r.style) };
+@@ -160,7 +164,7 @@
+       if (s) restoreSelection(element, s);
+       element.dataset.initialized = 'true';
+     }
+-  }, [value, format]);
++  }, [value, formatKey]);
+   useEffect(() => {
+     document.addEventListener('selectionchange', refresh);
+     let frame = 0,
+@@ -172,8 +176,15 @@
+         frame = requestAnimationFrame(focus);
+         return;
+       }
++      // A click or keystroke may focus the editor before this delayed callback.
++      // Keep that live caret instead of resetting it to the initial prop length.
++      if (document.activeElement === element) {
++        refresh();
++        return;
++      }
+       element.focus({ preventScroll: true });
+-      restoreSelection(element, { start: value.length, end: value.length });
++      const end = current.current.text.length;
++      restoreSelection(element, { start: end, end });
+       refresh();
+     };
+     if (autoFocus) frame = requestAnimationFrame(focus);

@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+data/
+*.sqlite*
+*.db
+*.intelboard
+test-results/
+playwright-report/
+coverage/
+.cache/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,47 @@
+# Validation and release acceptance
+
+Development host: Fedora Linux x86-64. The original reference was not modified, its services/data were not used, and no Windows VM was accessed.
+
+## Verified locally
+
+- Production TypeScript/Vite build, lazy reader bundle and packaged reader fonts/cmaps/worker.
+- Twenty-four automated test cases in eight test files, including formatting/Unicode, reader positions, duplication and preview metadata, GIF frame/timing preservation, safe video URL normalization, future-schema preservation, native title boundaries, transactional board saves, optimistic conflicts and missing-file rollback.
+- Portable board/workspace round trips preserve original bytes, coordinates, viewport, groups, edges, formatted labels, media references and reading positions. Repeated imports create separate copies.
+- Traversal/unexpected ZIP names, unsupported manifest versions, malformed/forged expansion sizes and inconsistent EPUB metadata are rejected without changing existing boards.
+- Native protocol range responses, invalid ranges, inert active-content spoofing and filesystem traversal rejection.
+- Metadata restrictions reject private/reserved destinations while local board operations remain usable.
+- Hidden/offscreen Electron runtime with sandbox and Node integration disabled: real React board creation, note editing, native Undo/Redo/Select All commands, autosave and persistence across two process launches using disposable synthetic data.
+- Runtime with HTTP/HTTPS requests blocked: local image decode, complete board export/import and actual PDF/EPUB rendering. Screenshots inspected for expected canvas and reader layout. EPUB.js attempts to set a base URI are blocked by the retained restrictive CSP; the tested book renders successfully.
+- Final Linux AppImage packaging and direct AppImage execution: hidden offline smoke passed across two launches, including the native Edit menu. The embedded ASAR matches the inspected unpacked application byte-for-byte. Extracted launcher metadata has no sandbox-disabling argument.
+- Staged-source, production frontend and extracted AppImage-ASAR private-marker audit.
+- npm production dependency advisory check: zero known advisories at the time of this build. This is a point-in-time registry check, not a guarantee of no vulnerabilities.
+
+The retained source tests were adapted for the desktop service. The original server's HTTP/login tests and private production browser traces were not imported. New native service/protocol tests cover the replacement boundaries.
+
+## Not yet verified
+
+- A local Windows cross-build reached NSIS and stopped because Wine is unavailable; partial outputs were removed. Windows packaging is intentionally required on Windows so native modules match the target. The GitHub Actions Windows job is prepared but has not run because no remote repository/publication is authorized.
+- No manual Windows installation, launch, uninstall, display scaling or native file-dialog test has been performed.
+- Manual Fedora desktop acceptance for window decorations, multiple monitors/scaling, native dialogs, drag/drop from the file manager, clipboard integration and AppImage/FUSE behavior remains. Automated hidden rendering is not a substitute for all visible desktop interaction.
+- Live YouTube/provider behavior, all video codecs, complex/password-protected/corrupt PDFs and very large EPUBs/boards are not exhaustively tested. Unsupported documents/codecs keep the original-file download fallback.
+- No exhaustive crash/power-loss/disk-full campaign or long-running performance benchmark has been performed. Transactions, atomic writes, recovery drafts, prior-start snapshots and error paths were inspected/tested where practical.
+
+## Manual acceptance checklist on each OS
+
+1. Install/launch as an ordinary user with a fresh profile; confirm an empty board library and no server/tool setup.
+2. Create a board; add/edit/format notes. Pan/zoom, drag/resize, select/group/layer, connect/label/reverse, search and undo/redo. Test canvas shortcuts and native text clipboard shortcuts.
+3. Drop/paste/select a PNG/JPEG/GIF, video, PDF, EPUB and generic file. Read/navigate, add captions, save originals through native dialogs and reopen after restart.
+4. Disconnect networking. Edit existing boards and local media; close/reopen. Add an unavailable link and confirm unrelated editing still works.
+5. Export a board and a workspace, import each twice on both platforms and compare positions/content/attachment bytes. Cancel dialogs; reject a corrupt export.
+6. Close during an unsaved edit and during a capture; verify recovery/dismiss behavior. Relaunch and confirm last board/theme. Install a newer version and confirm data survives.
+7. Inspect installer/AppImage contents and exact dependency notices/source availability before public distribution. Confirm no reference environment, trace, private content, history or data file was bundled.
+
+CI repeats source tests, production build, hidden native runtime, packaging, packaged runtime and privacy scan on both platforms. Only an explicitly published GitHub Release triggers installer attachment.
+
+## Note-caret regression fix
+
+Native character-by-character insertion reproduced the empty-note defect before the fix: after the first character the caret was at offset 0. The editor now keys incoming formatting synchronization by its serialized content, so a local selection render with a fresh but equivalent formatting array cannot reapply stale parent text. Delayed autofocus also preserves an already focused editor’s live caret instead of restoring an outdated initial position. Hidden runtime coverage types a full sentence, checks the caret after every character, clears and retypes text, then verifies the saved result across restarts. The same framework-independent frontend change is supplied in `patches/note-caret.patch` for the web edition; the read-only reference and live web deployment are not changed by the desktop build.
+
+## Resized-region drag regression fix
+
+Region containment now uses measured dimensions, then persisted width/height, before creation-time styles. This matches React Flow's layout and NodeResizer updates. Regression cases cover enlarged/shrunken regions, resized notes, exact edges, overlap rejection and saved dimensions after reopening. The hidden desktop check physically enlarges a region using its resize handle, drags it with two contained notes, then reopens the board and repeats. Both notes must retain their offsets. A matching web-source patch is in `patches/region-drag.patch`; the original reference and live server remain unchanged.
