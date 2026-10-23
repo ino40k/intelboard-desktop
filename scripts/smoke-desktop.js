@@ -6,7 +6,7 @@ import electron from 'electron';
 const dir=await mkdtemp(path.join(os.tmpdir(),'intelboard-smoke-'));
 const binary=process.env.INTELBOARD_TEST_BINARY||electron;
 const args=process.env.INTELBOARD_TEST_BINARY?[]:['.'];
-// A hidden BrowserWindow uses the existing graphical session; nothing is shown.
+// Local BrowserWindows stay hidden; hosted Windows CI uses its disposable desktop.
 // No sandbox bypass. One process tree, two starts, 30s per start, killed on timeout.
 try {
   for(let iteration=0;iteration<2;iteration++) {

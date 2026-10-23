@@ -9,7 +9,7 @@ import { exportBoards, importBoards } from './transfer.js';
 export async function runSmoke(window, service, dir) {
   const errors=[]; console.log('smoke: startup');
   window.webContents.on('console-message',event=>{if(event.level==='error')errors.push(event.message);});
-  const js=code=>window.webContents.executeJavaScript(code,true);
+  const js=async code=>{try{return await window.webContents.executeJavaScript(code,true);}catch(error){throw new Error(error.message+'; expression: '+code+'; renderer errors: '+errors.join(' | '));}};
   async function wait(code) {
     const deadline=Date.now()+10000;
     while(Date.now()<deadline){if(await js(code))return;await new Promise(r=>setTimeout(r,100));}
@@ -29,7 +29,7 @@ export async function runSmoke(window, service, dir) {
     await js(`document.querySelector('dialog form').requestSubmit()`);
     await wait('!!document.querySelector(".workspace")');
     await js(`document.querySelector('[aria-label="Add note (N)"]').click()`);
-    await wait('!!document.querySelector("[contenteditable=true]")');
+    await wait(`!!document.querySelector('[contenteditable=true]') && getComputedStyle(document.querySelector('[contenteditable=true]').closest('.react-flow__node')).visibility!=='hidden'`);
     await js(`document.querySelector('[contenteditable=true]').focus()`);
     console.log('smoke: note editor focused');
 

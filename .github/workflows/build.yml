@@ -46,7 +46,7 @@ jobs:
       - name: Linux hidden desktop smoke
         if: runner.os == 'Linux'
         run: timeout 75s xvfb-run -a npm run test:desktop
-      - name: Windows hidden desktop smoke
+      - name: Windows desktop smoke
         if: runner.os == 'Windows'
         run: npm run test:desktop
       - name: Package
