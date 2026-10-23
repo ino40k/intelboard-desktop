@@ -5,7 +5,7 @@ The desktop repository is https://github.com/ino40k/intelboard-desktop. The owne
 ## Initial repository setup
 
 1. Review this source, validation report, dependency notices and the final release privacy audit.
-2. On Windows 11 and Fedora, run the manual acceptance checks in VALIDATION.md with synthetic data.
+2. For stable releases, run the manual acceptance checks in VALIDATION.md on Windows 11 and Fedora with synthetic data. Initial testing prereleases must state which manual checks remain.
 3. Create an empty GitHub repository. Do not upload the parent workspace or original reference project.
 4. From this desktop repository, make a clean initial commit, then connect the approved remote:
 

@@ -1,6 +1,6 @@
 # Validation and release acceptance
 
-Development host: Fedora Linux x86-64. The original reference was not modified, its services/data were not used, and no Windows VM was accessed.
+Development host: Fedora Linux x86-64. The original reference was not modified and its services/data were not used. The user's Windows VM was not accessed; Windows automation ran on a disposable GitHub-hosted Windows 2025 runner.
 
 ## Verified locally
 
@@ -18,10 +18,20 @@ Development host: Fedora Linux x86-64. The original reference was not modified, 
 
 The retained source tests were adapted for the desktop service. The original server's HTTP/login tests and private production browser traces were not imported. New native service/protocol tests cover the replacement boundaries.
 
+## Verified on hosted Windows and Linux
+
+[Build 39911018451](https://github.com/ino40k/intelboard-desktop/actions/runs/39911018451) passed all build jobs for the initial testing release on 2026-10-23.
+
+- Native Windows x64 NSIS installer and Linux x64 AppImage, built on their respective operating systems.
+- All 24 automated cases, production build, source runtime and packaged runtime checks on both platforms.
+- Windows silent per-user installation, installed application checks across two process launches, and silent uninstallation. Each runtime check uses disposable synthetic data and verifies typing/caret behavior, native canvas Edit commands, persistence, offline image/PDF/EPUB rendering, portable export/import, and resized-region followers across reopening.
+- Source, production frontend and packaged ASAR privacy audit on both platforms; native dependency sources and SHA-256 checksums generated separately.
+
+Local tests remain hidden. Hosted Windows checks use the runner's disposable desktop so native selection and rendering have normal window behavior. Initial EPUB location is reconciled after card layout to avoid leaving a rendered chapter labeled "Opening…".
+
 ## Not yet verified
 
-- A local Windows cross-build reached NSIS and stopped because Wine is unavailable; partial outputs were removed. Windows packaging is intentionally required on Windows so native modules match the target. The GitHub Actions Windows job is prepared but has not run because no remote repository/publication is authorized.
-- No manual Windows installation, launch, uninstall, display scaling or native file-dialog test has been performed.
+- Manual Windows 11 VM acceptance, including installer screens, display scaling, native file dialogs, clipboard and everyday use, remains. Hosted Windows Server automation does not replace this interactive check. The initial installer is unsigned.
 - Manual Fedora desktop acceptance for window decorations, multiple monitors/scaling, native dialogs, drag/drop from the file manager, clipboard integration and AppImage/FUSE behavior remains. Automated hidden rendering is not a substitute for all visible desktop interaction.
 - Live YouTube/provider behavior, all video codecs, complex/password-protected/corrupt PDFs and very large EPUBs/boards are not exhaustively tested. Unsupported documents/codecs keep the original-file download fallback.
 - No exhaustive crash/power-loss/disk-full campaign or long-running performance benchmark has been performed. Transactions, atomic writes, recovery drafts, prior-start snapshots and error paths were inspected/tested where practical.
@@ -36,7 +46,7 @@ The retained source tests were adapted for the desktop service. The original ser
 6. Close during an unsaved edit and during a capture; verify recovery/dismiss behavior. Relaunch and confirm last board/theme. Install a newer version and confirm data survives.
 7. Inspect installer/AppImage contents and exact dependency notices/source availability before public distribution. Confirm no reference environment, trace, private content, history or data file was bundled.
 
-CI repeats source tests, production build, hidden native runtime, packaging, packaged runtime and privacy scan on both platforms. Only an explicitly published GitHub Release triggers installer attachment.
+CI repeats source tests, production build, native runtime, packaging, packaged runtime and privacy scan on both platforms, plus Windows installer acceptance. Only an explicitly published GitHub Release triggers installer attachment.
 
 ## Note-caret regression fix
 
