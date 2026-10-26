@@ -1,6 +1,6 @@
 # Maintainer release process
 
-The desktop repository is https://github.com/ino40k/intelboard-desktop. The owner authorized public source and testing releases. The private reference source is outside this independent repository. Never add it, its environment/configuration, logs, traces or generated history.
+The desktop repository is https://github.com/ino40k/intelboard-desktop. The owner authorized public source and desktop releases, including promotion of v1.0.3 to stable after independent Windows testing. The private reference source is outside this independent repository. Never add it, its environment/configuration, logs, traces or generated history.
 
 ## Initial repository setup
 

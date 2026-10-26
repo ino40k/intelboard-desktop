@@ -31,7 +31,7 @@ Local tests remain hidden. Hosted Windows checks use the runner's disposable des
 
 ## Not yet verified
 
-- Manual Windows 11 VM acceptance, including installer screens, display scaling, native file dialogs, clipboard and everyday use, remains. Hosted Windows Server automation does not replace this interactive check. The initial installer is unsigned.
+- On 2026-10-26, the owner reported that a friend tested the Windows app with good results and approved v1.0.3 as stable. Specific coverage of installer screens, display scaling, native file dialogs and clipboard was not recorded. The Windows installer remains unsigned.
 - Manual Fedora desktop acceptance for window decorations, multiple monitors/scaling, native dialogs, drag/drop from the file manager, clipboard integration and AppImage/FUSE behavior remains. Automated hidden rendering is not a substitute for all visible desktop interaction.
 - Live YouTube/provider behavior, all video codecs, complex/password-protected/corrupt PDFs and very large EPUBs/boards are not exhaustively tested. Unsupported documents/codecs keep the original-file download fallback.
 - No exhaustive crash/power-loss/disk-full campaign or long-running performance benchmark has been performed. Transactions, atomic writes, recovery drafts, prior-start snapshots and error paths were inspected/tested where practical.

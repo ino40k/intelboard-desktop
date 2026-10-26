@@ -11,7 +11,7 @@ A private visual workspace for sources, thoughts, media, and the connections bet
 
 ## Install
 
-Download a release for **Windows 11 x64** or **Fedora Linux x64**. Download installers from [GitHub Releases](https://github.com/ino40k/intelboard-desktop/releases). Initial releases are testing builds; Windows installers are currently unsigned.
+Download the latest stable release for **Windows 11 x64** or **Fedora Linux x64** from [GitHub Releases](https://github.com/ino40k/intelboard-desktop/releases/latest). Windows installers are currently unsigned.
 
 **Windows:** run `IntelBoard-<version>-win-x64.exe` and follow the installer. Installation is per user, with Start Menu and optional desktop shortcuts. Unsigned initial builds may show Windows reputation warnings. No administrator account is required for the default installation.
 
