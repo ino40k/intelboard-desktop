@@ -170,6 +170,50 @@ export async function runSmoke(window, service, dir) {
     assert.ok(Math.abs(moved.position.x-original.position.x-movedAgain.position.x)<1,'Region followers must still work after reopening');
   }
   console.log('smoke: actual region resize, both note followers, and reopen passed');
+
+  const connections=service.store.create('Synthetic persistent connections');
+  const cards=Array.from({length:3},()=>randomUUID());
+  connections.viewport={x:70,y:140,zoom:0.8};
+  connections.nodes=cards.map((id,i)=>({id,type:'research',position:{x:i*380,y:0},style:{width:280,height:220},data:{kind:'note',text:'Connection '+(i+1)}}));
+  service.store.save(connections.id,connections);
+  await js(`localStorage.setItem('intelboard.last','${connections.id}')`);await window.reload();
+  await wait(`document.querySelectorAll('.note-eyebrow').length===3 && Array.from(document.querySelectorAll('.react-flow__node')).every(n=>getComputedStyle(n).visibility!=='hidden')`);
+  const connectButton='[aria-label="Connect items (C)"]';
+  async function clickCard(index) {
+    const p=await point(`[data-id="${cards[index]}"] .note-eyebrow`);
+    await mouse('mouseDown',p.x,p.y);await mouse('mouseUp',p.x,p.y);
+  }
+  async function press(keyCode) {
+    window.webContents.sendInputEvent({type:'keyDown',keyCode});
+    window.webContents.sendInputEvent({type:'keyUp',keyCode});
+    await new Promise(r=>setTimeout(r,60));
+  }
+  await js(`document.querySelector(${JSON.stringify(connectButton)}).click()`);
+  await wait(`!!document.querySelector('.workspace.connecting')`);
+  for(const [index,pair] of [[0,1],[1,2]].entries()) {
+    await clickCard(pair[0]);await clickCard(pair[1]);
+    await wait(`document.querySelectorAll('.react-flow__edge').length===${index+1}`);
+    assert.equal(await js(`!!document.querySelector('.workspace.connecting')`),true,'Connection mode must stay active after each click-to-connect pair');
+  }
+  const from=await point(`[data-id="${cards[0]}"] .react-flow__handle[data-handleid="top"]`);
+  const to=await point(`[data-id="${cards[2]}"] .react-flow__handle[data-handleid="top"]`);
+  await drag(`[data-id="${cards[0]}"] .react-flow__handle[data-handleid="top"]`,to.x-from.x,to.y-from.y);
+  await wait(`document.querySelectorAll('.react-flow__edge').length===3`);
+  assert.equal(await js(`!!document.querySelector('.workspace.connecting')`),true,'Connection mode must also stay active after dragging a connector');
+  // Escape must clear the pending source as well as leave the mode.
+  await clickCard(0);await press('Escape');
+  await wait(`!document.querySelector('.workspace.connecting')`);
+  await press('C');await wait(`!!document.querySelector('.workspace.connecting')`);
+  await clickCard(2);
+  assert.equal(await js(`document.querySelectorAll('.react-flow__edge').length`),3,'Re-entering must start a fresh pair');
+  await clickCard(0);await wait(`document.querySelectorAll('.react-flow__edge').length===4`);
+  await js(`document.querySelector(${JSON.stringify(connectButton)}).click()`);
+  await wait(`!document.querySelector('.workspace.connecting')`);
+  const savedDeadline=Date.now()+5000;
+  while(Date.now()<savedDeadline&&service.store.get(connections.id).edges.length!==4)await new Promise(r=>setTimeout(r,100));
+  assert.deepEqual(service.store.get(connections.id).edges.map(e=>[e.source,e.target]),[[cards[0],cards[1]],[cards[1],cards[2]],[cards[0],cards[2]],[cards[2],cards[0]]]);
+  await window.reload();await wait(`document.querySelectorAll('.react-flow__edge').length===4`);
+  console.log('smoke: repeated click/drag connections, explicit exit, cancellation, and persistence passed');
   await js(`localStorage.setItem('intelboard.last','${board.id}')`);
 
   const shot=await window.webContents.capturePage(undefined,{stayHidden:true,stayAwake:true});await writeFile(path.join(dir,'smoke.png'),shot.toPNG());

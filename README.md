@@ -21,7 +21,7 @@ Updates are manual: install the next Windows installer over the existing install
 
 ## Use
 
-Create a board, press **N** for a note, **L** for a link, **R** for a region, or drop files into the canvas. Use the upload button for a native file picker. Pan with **H** or hold Space; press **F** to fit content. Connect cards with **C** or drag a connection handle. The board menu lists keyboard shortcuts and themes. Text editing and canvas editing have separate undo histories, as in the original app.
+Create a board, press **N** for a note, **L** for a link, **R** for a region, or drop files into the canvas. Use the upload button for a native file picker. Pan with **H** or hold Space; press **F** to fit content. Connect cards with **C** or drag a connection handle. Connections mode stays active after each connection; press **Escape**, choose another tool, or toggle the Connect button to exit. The board menu lists keyboard shortcuts and themes. Text editing and canvas editing have separate undo histories, as in the original app.
 
 Changes save automatically. A save error keeps a recovery draft and displays the failure. Wait for file imports/link captures before leaving a board or exporting it. **Export board…** saves a `.intelboard` archive containing the complete board and copies of its attachments. The library offers **Import boards…** and **Export workspace…**. Imports always create separate boards marked “imported”; they never replace existing boards. Workspace exports contain all boards and referenced files, but not recovery drafts, unused attachments or machine preferences. Exports are ordinary unencrypted ZIP files and should be shared only with intended recipients.
 

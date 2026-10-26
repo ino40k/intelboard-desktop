@@ -397,7 +397,6 @@ export default function Canvas({
         { ...connection, id: uuid(), type: 'research', data: { directed: true } },
       ]);
       connectionStart.current = null;
-      setTool('select');
     },
     [checkpoint],
   );
@@ -1349,7 +1348,7 @@ export default function Canvas({
           </div>
           <span className="canvas-hint">
             {tool === 'connect'
-              ? 'Click two items to connect · or drag a connector'
+              ? 'Click two items to connect · or drag a connector · Esc to exit'
               : space || tool === 'hand'
                 ? 'Drag to pan'
                 : 'Space + drag to pan · Ctrl + scroll to zoom'}
