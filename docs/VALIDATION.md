@@ -52,6 +52,12 @@ CI repeats source tests, production build, native runtime, packaging, packaged r
 
 The desktop smoke check creates multiple click-to-connect pairs and a dragged-handle connection without reselecting the tool. It verifies that connections mode stays active, Escape cancels a pending source, the C shortcut starts a fresh pair, the toolbar toggle exits, and all four connections retain their endpoints after saving and reopening. This check reproduced the automatic return to Select before the fix. The Windows and Linux release jobs run it against the source and packaged application; Windows also runs it after installation.
 
+## Import work amplification fix (1.0.4)
+
+Import now computes attachment references once and validates each distinct node-referenced EPUB once across all boards. Independent attachment-side validation remains in place, including when node and attachment metadata disagree. Archive format, byte limits, checksums, ID remapping and transactional saves are unchanged.
+
+Three new regression cases bring the suite to 27 tests. On the previous implementation, a small synthetic shared-book archive caused 77 nested ZIP validations instead of 3, and a 96-node archive with 24 attachments caused 2,400 reference visits instead of 96. The patched implementation meets both bounds and preserves the imported references and original bytes. Mixed generic/EPUB metadata in either node order still rejects malformed bytes before adding assets or boards. Existing round-trip, checksum, expansion-limit, reader-position and rollback tests continue to pass.
+
 ## Note-caret regression fix
 
 Native character-by-character insertion reproduced the empty-note defect before the fix: after the first character the caret was at offset 0. The editor now keys incoming formatting synchronization by its serialized content, so a local selection render with a fresh but equivalent formatting array cannot reapply stale parent text. Delayed autofocus also preserves an already focused editor’s live caret instead of restoring an outdated initial position. Hidden runtime coverage types a full sentence, checks the caret after every character, clears and retypes text, then verifies the saved result across restarts. The same framework-independent frontend change is supplied in `patches/note-caret.patch` for the web edition; the read-only reference and live web deployment are not changed by the desktop build.

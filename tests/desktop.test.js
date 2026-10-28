@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import JSZip from 'jszip';
+import yauzl from 'yauzl';
 import { createService } from '../desktop/service.js';
 import { exportBoards, importBoards } from '../desktop/transfer.js';
 import { createProtocol, ORIGIN } from '../desktop/protocol.js';
@@ -96,6 +97,62 @@ test('import cannot bypass EPUB limits by disagreeing with attachment metadata',
   const file=path.join(dir,'inconsistent.intelboard');await exportBoards(service,[b.id],file);
   await assert.rejects(importBoards(service,file));assert.equal(service.store.list().length,1);
   await assert.rejects(service.request('/assets/'+asset.id+'/validate-epub'));
+});
+test('shared EPUB references across boards validate per distinct asset and preserve every reference',async t=>{
+  const {service,dir}=await setup(t);
+  const book=new JSZip();book.file('chapter.xhtml','Synthetic shared chapter');
+  const bytes=await book.generateAsync({type:'nodebuffer',compression:'DEFLATE'});
+  // Identical bytes under distinct IDs still need separate validation. The second
+  // attachment is identified as EPUB only by a later node's presentation metadata.
+  const assets=[await service.assets.add(bytes,'book.epub','application/epub+zip'),await service.assets.add(bytes,'attachment.bin','application/octet-stream')];
+  const boards=Array.from({length:2},(_,i)=>{
+    const b=service.store.create('Shared book '+i);
+    b.nodes=Array.from({length:40},(_,j)=>node({kind:'file',assetId:assets[j%2].id,...(j<2?{filename:'attachment.bin',mime:'application/octet-stream'}:{filename:'book.epub',mime:'application/epub+zip'})}));
+    service.store.save(b.id,b);return b;
+  });
+  const file=path.join(dir,'shared.intelboard');await exportBoards(service,boards.map(b=>b.id),file);
+  const original=yauzl.fromBuffer;let inflations=0;
+  yauzl.fromBuffer=function(input,...args){if(input.equals(bytes))inflations++;return original.call(this,input,...args);};
+  let imported;
+  try {imported=await importBoards(service,file);} finally {yauzl.fromBuffer=original;}
+  assert.equal(inflations,3,'Two node-derived validations and one independent asset-side validation, regardless of reference count');
+  assert.equal(imported.length,2);
+  const copies=imported.map(id=>service.store.get(id));
+  assert.equal(copies[0].nodes.length,40);assert.equal(copies[1].nodes.length,40);
+  const ids=new Set(copies.flatMap(b=>b.nodes.map(n=>n.data.assetId)));
+  assert.equal(ids.size,2);
+  for(const id of ids){assert.ok(!assets.some(a=>a.id===id));assert.deepEqual(await readFile(path.join(service.assets.folder,id)),bytes);}
+});
+test('attachment matching traverses shared node references once rather than once per asset',async t=>{
+  const {service,dir}=await setup(t);
+  const assets=[];
+  for(let i=0;i<24;i++)assets.push(await service.assets.add(Buffer.from('Synthetic '+i),'file.txt','text/plain'));
+  const b=service.store.create('Many shared attachments');
+  b.nodes=Array.from({length:96},(_,i)=>node({kind:'file',assetId:assets[i%assets.length].id}));service.store.save(b.id,b);
+  const file=path.join(dir,'references.intelboard');await exportBoards(service,[b.id],file);
+  const original=Array.prototype.flatMap;let nodeVisits=0;
+  Array.prototype.flatMap=function(callback,...args){
+    if(this[0]?.type==='research' && this[0]?.data)nodeVisits+=this.length;
+    return original.call(this,callback,...args);
+  };
+  let imported;
+  try {imported=await importBoards(service,file);} finally {Array.prototype.flatMap=original;}
+  assert.equal(nodeVisits,b.nodes.length,'Reference matching work must be independent of attachment count');
+  assert.equal(service.store.get(imported[0]).nodes.length,b.nodes.length);
+});
+test('mixed generic and EPUB references reject invalid bytes before any writes in either order',async t=>{
+  const {service,dir}=await setup(t);
+  const asset=await service.assets.add(Buffer.from('Synthetic non-ZIP'),'attachment.bin','application/octet-stream');
+  const b=service.store.create('Mixed metadata');
+  for(const reverse of [false,true]){
+    b.nodes=[node({kind:'file',assetId:asset.id,filename:'attachment.bin'}),node({kind:'file',assetId:asset.id,filename:'book.EPUB'})];
+    if(reverse)b.nodes.reverse();
+    service.store.save(b.id,{...b,revision:service.store.get(b.id).revision});
+    const file=path.join(dir,'mixed.intelboard');await exportBoards(service,[b.id],file);
+    await assert.rejects(importBoards(service,file));
+    assert.equal(service.store.list().length,1);
+    assert.equal(service.store.db.prepare('SELECT count(*) AS n FROM assets').get().n,1);
+  }
 });
 test('future database versions are preserved and long titles duplicate within the public schema',async t=>{
   const dir=await mkdtemp(path.join(tmpdir(),'intelboard-version-'));

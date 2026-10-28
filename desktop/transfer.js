@@ -51,26 +51,30 @@ export async function importBoards(service, source) {
   if (!manifestFile || manifestFile.length > 32 * 1024 * 1024) throw new Error('Missing or oversized manifest');
   const manifest = manifestSchema.parse(JSON.parse(manifestFile.toString('utf8')));
   const ids = new Set(manifest.assets.map(a => a.id));
-  if (ids.size !== manifest.assets.length || files.size !== manifest.assets.length + 1 || [...refs(manifest.boards)].some(id => !ids.has(id)) || [...ids].some(id=>!refs(manifest.boards).has(id))) throw new Error('Attachment manifest does not match board references');
+  const referenced = refs(manifest.boards);
+  if (ids.size !== manifest.assets.length || files.size !== manifest.assets.length + 1 || [...referenced].some(id => !ids.has(id)) || [...ids].some(id=>!referenced.has(id))) throw new Error('Attachment manifest does not match board references');
   // Validate every payload before changing the database or adding files.
-  const payloads = [];
+  const payloads = new Map();
   for (const asset of manifest.assets) {
     const bytes = files.get('assets/' + asset.id);
     if (!bytes) throw new Error('Missing attachment');
     if (bytes.length !== asset.size || createHash('sha256').update(bytes).digest('hex') !== asset.checksum) throw new Error('Attachment checksum mismatch');
-    payloads.push(bytes);
+    payloads.set(asset.id, bytes);
   }
+  // Nodes can identify an EPUB even when the attachment metadata is generic.
+  // Validate each shared asset once across all boards, before any writes.
+  const validatedEpubs = new Set();
   for (const board of manifest.boards) for (const node of board.nodes) {
-    if (node.data.assetId && documentFormat(node.data.filename, node.data.mime) === 'epub') {
-      const index = manifest.assets.findIndex(a => a.id === node.data.assetId);
-      await readBoundedZip(payloads[index], { collect: false });
+    const id = node.data.assetId;
+    if (id && !validatedEpubs.has(id) && documentFormat(node.data.filename, node.data.mime) === 'epub') {
+      await readBoundedZip(payloads.get(id), { collect: false });
+      validatedEpubs.add(id);
     }
   }
   const added = [], map = new Map();
   try {
-    for (let i=0;i<manifest.assets.length;i++) {
-      const asset = manifest.assets[i];
-      const imported = await service.assets.add(payloads[i], asset.filename.replace(/[\\/]/g,'_'), asset.mime);
+    for (const asset of manifest.assets) {
+      const imported = await service.assets.add(payloads.get(asset.id), asset.filename.replace(/[\\/]/g,'_'), asset.mime);
       added.push(imported.id); map.set(asset.id, imported.id);
     }
     return service.store.transaction(() => manifest.boards.map(original => {
