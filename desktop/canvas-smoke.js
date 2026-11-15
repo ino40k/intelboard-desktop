@@ -337,19 +337,42 @@ export async function runSmoke(window, service, dir) {
         "out",
         "Enlarged area outside the original box must be clickable",
       );
-      await mouse("mouseDown", outside);
-      for (let i = 1; i <= 4; i++)
-        await mouse("mouseMove", {
-          x: outside.x + ((to.x - outside.x) * i) / 4,
-          y: to.y,
-        });
-      // XYHandle completes from its last processed move, not mouse-up coordinates.
-      // Native Chromium input can coalesce that final move on a busy runner.
-      await wait(
-        `!!document.querySelector('[data-nodeid="${b.id}"].react-flow__handle.connectingto.valid')`,
+      await js(
+        `(()=>{window.__canvasInputs=[];window.__canvasInputTrace=e=>{window.__canvasInputs.push({type:e.type,x:e.clientX,y:e.clientY,buttons:e.buttons,button:e.button,target:e.target?.className,handle:e.target?.dataset?.handleid,node:e.target?.dataset?.nodeid});if(window.__canvasInputs.length>24)window.__canvasInputs.shift();};for(const type of ['pointerdown','mousedown','pointermove','mousemove','pointerup','mouseup'])document.addEventListener(type,window.__canvasInputTrace,true);})()`,
       );
-      await mouse("mouseUp", to);
-      await wait(`document.querySelectorAll('.react-flow__edge').length===1`);
+      try {
+        await mouse("mouseDown", outside);
+        for (let i = 1; i <= 4; i++)
+          await mouse("mouseMove", {
+            x: outside.x + ((to.x - outside.x) * i) / 4,
+            y: to.y,
+          });
+        // XYHandle completes from its last processed move, not mouse-up coordinates.
+        // Native Chromium input can coalesce that final move on a busy runner.
+        await wait(
+          `!!document.querySelector('[data-nodeid="${b.id}"].react-flow__handle.connectingto.valid')`,
+        );
+        await mouse("mouseUp", to);
+        await wait(`document.querySelectorAll('.react-flow__edge').length===1`);
+      } catch (error) {
+        console.log(
+          "Connection input diagnostics:",
+          JSON.stringify({
+            from,
+            to,
+            outside,
+            focused: window.isFocused(),
+            ...(await js(
+              `(()=>{const r=n=>{const b=n.getBoundingClientRect();return {x:b.x,y:b.y,width:b.width,height:b.height};};return {events:window.__canvasInputs,dpr:devicePixelRatio,focus:document.hasFocus(),right:!!document.querySelector('.right-navigating'),nodes:Array.from(document.querySelectorAll('.react-flow__node')).map(n=>({id:n.dataset.id,rect:r(n)})),handles:Array.from(document.querySelectorAll('.react-flow__handle')).map(n=>({node:n.dataset.nodeid,handle:n.dataset.handleid,classes:n.className,rect:r(n),pseudo:getComputedStyle(n,'::before').width})),connection:document.querySelector('.react-flow__connectionline')?.outerHTML};})()`,
+            )),
+          }),
+        );
+        throw error;
+      } finally {
+        await js(
+          `(()=>{for(const type of ['pointerdown','mousedown','pointermove','mousemove','pointerup','mouseup'])document.removeEventListener(type,window.__canvasInputTrace,true);delete window.__canvasInputs;delete window.__canvasInputTrace;})()`,
+        );
+      }
       const pathBefore = await js(
         `document.querySelector('.react-flow__edge-path').getAttribute('d')`,
       );
