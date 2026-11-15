@@ -1,9 +1,21 @@
 import { documentFormat } from "../shared/document.js";
-import { regionContains } from "../shared/geometry.js";
+import {
+  connectionHandleScale,
+  createAlignmentSession,
+  alignDrag,
+} from "../shared/canvas-interactions.js";
+import { useCanvasNavigation } from "./useCanvasNavigation";
 import { InlineEditor } from "./InlineText";
 import { ThemeSelect } from "./ThemeSelect";
 import { themeMode, type ThemeId } from "./themes";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  type CSSProperties,
+} from "react";
 import {
   ReactFlow,
   Background,
@@ -15,6 +27,7 @@ import {
   SelectionMode,
   ConnectionMode,
   type NodeChange,
+  type NodePositionChange,
   type EdgeChange,
   type Viewport,
   type Connection as FlowConnection,
@@ -210,12 +223,26 @@ export default function Canvas({
     past = useRef<(typeof emptySnapshot)[]>([]),
     future = useRef<(typeof emptySnapshot)[]>([]),
     clipboard = useRef<typeof emptySnapshot | null>(null),
-    drag = useRef<{
-      start: { x: number; y: number };
-      followers: Item[];
-    } | null>(null),
+    drag = useRef<ReturnType<typeof createAlignmentSession> | null>(null),
     titleFocus = useRef(title);
   state.current = { nodes, edges };
+  const { canvasRef, rightNavigating } = useCanvasNavigation(flow, (point) => {
+    pointer.current = point;
+  });
+  const [alignmentGuides, setAlignmentGuides] = useState<
+    ReturnType<typeof alignDrag>["guides"]
+  >([]);
+  const guideSignature = useRef("");
+  const showGuides = useCallback(
+    (guides: ReturnType<typeof alignDrag>["guides"]) => {
+      const signature = JSON.stringify(guides);
+      if (signature !== guideSignature.current) {
+        guideSignature.current = signature;
+        setAlignmentGuides(guides);
+      }
+    },
+    [],
+  );
   const privatePersistence = usePersistence(
     board,
     nodes,
@@ -580,10 +607,68 @@ export default function Canvas({
   );
   const connectionStart = useRef<string | null>(null);
   const changes = useCallback(
-    (changes: NodeChange<Item>[]) =>
-      setNodes((ns) => applyNodeChanges(changes, ns)),
-    [],
+    (changes: NodeChange<Item>[]) => {
+      const session = drag.current;
+      const positions = changes.filter(
+        (change): change is NodePositionChange =>
+          change.type === "position" &&
+          !!change.position &&
+          !!session?.ids.has(change.id),
+      );
+      if (!session || !positions.length) {
+        setNodes((ns) => applyNodeChanges(changes, ns));
+        return;
+      }
+      const primary =
+        positions.find((change) => change.id === session.anchorId) ||
+        positions[0];
+      if (primary.type !== "position" || !primary.position) return;
+      const original = session.originals.get(primary.id)!;
+      const snapped = alignDrag(
+        session,
+        {
+          x: primary.position.x - original.position.x,
+          y: primary.position.y - original.position.y,
+        },
+        flow.getZoom(),
+      );
+      showGuides(snapped.guides);
+      const next: NodeChange<Item>[] = changes.filter(
+        (change) => change.type !== "position" || !session.ids.has(change.id),
+      );
+      for (const [id, node] of session.originals)
+        next.push({
+          id,
+          type: "position",
+          position: {
+            x: node.position.x + snapped.delta.x,
+            y: node.position.y + snapped.delta.y,
+          },
+          dragging: primary.dragging,
+        });
+      setNodes((ns) => applyNodeChanges(next, ns));
+    },
+    [flow, showGuides],
   );
+  const startDrag = useCallback(
+    (node: Item, selection: Item[]) => {
+      if (drag.current || !node) return;
+      checkpoint();
+      manipulate(true);
+      drag.current = createAlignmentSession(
+        state.current.nodes,
+        new Set([node.id, ...selection.map((n) => n.id)]),
+        node.id,
+      );
+    },
+    [checkpoint, manipulate],
+  );
+  const finishDrag = useCallback(() => {
+    if (!drag.current) return;
+    drag.current = null;
+    showGuides([]);
+    manipulate(false);
+  }, [showGuides, manipulate]);
   const edgeChanges = useCallback(
     (changes: EdgeChange<Connection>[]) =>
       setEdges((es) => applyEdgeChanges(changes, es)),
@@ -871,7 +956,7 @@ export default function Canvas({
   return (
     <CanvasContext.Provider value={context}>
       <main
-        className={`workspace ${tool === "connect" ? "connecting" : ""} ${manipulating ? "canvas-manipulating" : ""}`}
+        className={`workspace ${tool === "connect" ? "connecting" : ""} ${manipulating || rightNavigating ? "canvas-manipulating" : ""}`}
       >
         <header className="canvas-header">
           <div className="header-left">
@@ -982,6 +1067,12 @@ export default function Canvas({
         )}
         <div
           className="canvas"
+          ref={canvasRef}
+          style={
+            {
+              "--connection-handle-scale": connectionHandleScale(viewport.zoom),
+            } as CSSProperties
+          }
           inert={
             !!board.shared &&
             (!shared.ready ||
@@ -1071,47 +1162,12 @@ export default function Canvas({
             onlyRenderVisibleElements
             elevateNodesOnSelect={false}
             colorMode={themeMode(theme)}
-            onNodeDragStart={(_e, n, selection) => {
-              manipulate(true);
-              checkpoint();
-              const selectedIds = new Set(selection.map((n) => n.id));
-              const followers = state.current.nodes.filter(
-                (other) =>
-                  other.id !== n.id &&
-                  !selectedIds.has(other.id) &&
-                  ((n.data.groupId && other.data.groupId === n.data.groupId) ||
-                    (n.data.kind === "region" && regionContains(n, other))),
-              );
-              drag.current = { start: n.position, followers };
-            }}
-            onNodeDrag={(_e, n) => {
-              if (!drag.current) return;
-              const { start, followers } = drag.current;
-              const map = new Map(followers.map((item) => [item.id, item]));
-              setNodes((ns) =>
-                ns.map((item) => {
-                  const original = map.get(item.id);
-                  return original
-                    ? {
-                        ...item,
-                        position: {
-                          x: original.position.x + n.position.x - start.x,
-                          y: original.position.y + n.position.y - start.y,
-                        },
-                      }
-                    : item;
-                }),
-              );
-            }}
-            onNodeDragStop={() => {
-              drag.current = null;
-              manipulate(false);
-            }}
-            onSelectionDragStart={() => {
-              checkpoint();
-              manipulate(true);
-            }}
-            onSelectionDragStop={() => manipulate(false)}
+            onNodeDragStart={(_e, n, selection) => startDrag(n, selection)}
+            onNodeDragStop={finishDrag}
+            onSelectionDragStart={(_e, selection) =>
+              startDrag(selection[0], selection)
+            }
+            onSelectionDragStop={finishDrag}
             onNodeClick={(event, n) => {
               // React Flow owns handle clicks and preserves their source/target IDs.
               // Do not also create a second edge with the element-click defaults.
@@ -1196,6 +1252,36 @@ export default function Canvas({
               </defs>
             </svg>
           </ReactFlow>
+          {!!alignmentGuides.length && (
+            <svg className="alignment-guides" aria-hidden="true">
+              {alignmentGuides.map((guide) => (
+                <line
+                  key={guide.axis}
+                  data-axis={guide.axis}
+                  x1={
+                    guide.axis === "x"
+                      ? guide.at * viewport.zoom + viewport.x
+                      : guide.from * viewport.zoom + viewport.x
+                  }
+                  x2={
+                    guide.axis === "x"
+                      ? guide.at * viewport.zoom + viewport.x
+                      : guide.to * viewport.zoom + viewport.x
+                  }
+                  y1={
+                    guide.axis === "y"
+                      ? guide.at * viewport.zoom + viewport.y
+                      : guide.from * viewport.zoom + viewport.y
+                  }
+                  y2={
+                    guide.axis === "y"
+                      ? guide.at * viewport.zoom + viewport.y
+                      : guide.to * viewport.zoom + viewport.y
+                  }
+                />
+              ))}
+            </svg>
+          )}
           {!nodes.length && (
             <div className="empty-canvas">
               <div className="empty-mark">
@@ -1896,8 +1982,8 @@ export default function Canvas({
                 ["Add a source", "L / paste URL"],
                 ["Upload an image", "Paste / drop a file"],
                 ["Select / pan", "V / H"],
-                ["Pan temporarily", "Space + drag"],
-                ["Zoom at pointer", "Ctrl + scroll / pinch"],
+                ["Pan temporarily", "Right-drag / Space + drag"],
+                ["Zoom at pointer", "Right + scroll / Ctrl + scroll / pinch"],
                 ["Connect / region", "C / R"],
                 ["Select multiple", "Shift + click / drag"],
                 ["Copy / paste", "Ctrl or ⌘ + C / V"],

@@ -1,6 +1,6 @@
 {
   "name": "intelboard-desktop",
-  "version": "1.1.0-dev.1",
+  "version": "1.1.0-dev.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -17,7 +17,9 @@
     "notices:network": "node scripts/network-notices.js",
     "test:collaboration": "node tests/collaboration.test.js && node tests/collaboration-media.test.js && node tests/collaboration-persistence.test.js",
     "test:collaboration-ui": "node scripts/smoke-collaboration.js",
-    "test:collaboration-network": "node scripts/test-network.js"
+    "test:collaboration-network": "node scripts/test-network.js",
+    "test:canvas": "node scripts/smoke-canvas.js",
+    "test:canvas:shared": "node scripts/smoke-canvas.js --shared"
   },
   "dependencies": {
     "@xyflow/react": "^12.9.0",

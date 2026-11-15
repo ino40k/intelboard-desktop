@@ -617,12 +617,46 @@ kbd {
   box-shadow: none;
 }
 .react-flow__handle {
-  background: var(--surface);
-  border: 1.5px solid var(--accent);
+  background: transparent;
+  border: 1.5px solid transparent;
   width: 9px;
   height: 9px;
   opacity: 0;
   transition: opacity 0.12s;
+}
+/* Keep the measured 9px anchor fixed. The overflowing pseudo-element is both
+   the visible connector and its pointer target, without shifting edge endpoints. */
+.react-flow__handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(9px * var(--connection-handle-scale, 1));
+  height: calc(9px * var(--connection-handle-scale, 1));
+  transform: translate(-50%, -50%);
+  border: calc(1.5px * var(--connection-handle-scale, 1)) solid var(--accent);
+  background: var(--surface);
+  border-radius: inherit;
+  pointer-events: inherit;
+}
+.canvas.right-navigating,
+.canvas.right-navigating * {
+  cursor: grabbing !important;
+}
+.alignment-guides {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+.alignment-guides line {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.65;
 }
 .item:hover .react-flow__handle,
 .item.is-selected .react-flow__handle,

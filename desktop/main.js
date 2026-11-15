@@ -7,6 +7,7 @@ import {
   shell,
   Menu,
   session,
+  webFrameMain,
 } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -290,6 +291,22 @@ else {
           spellcheck: true,
         },
       });
+      const frameNavigation = readFileSync(
+        path.join(root, "desktop/frame-navigation.js"),
+        "utf8",
+      );
+      window.webContents.on(
+        "did-frame-finish-load",
+        (_event, mainFrame, processId, routingId) => {
+          if (mainFrame) return;
+          const frame = webFrameMain.fromId(processId, routingId);
+          try {
+            const url = new URL(frame?.url || "");
+            if (url.origin === "https://www.youtube-nocookie.com")
+              void frame.executeJavaScript(frameNavigation).catch(() => {});
+          } catch {}
+        },
+      );
       for (const type of ["delta", "status", "presence"])
         collaboration.on(type, (event) => {
           if (!window?.isDestroyed())
@@ -431,9 +448,11 @@ else {
       if (smoke) {
         try {
           const { runSmoke } = await import(
-            process.env.INTELBOARD_COLLAB_SMOKE
-              ? "./collaboration/smoke.js"
-              : "./smoke.js"
+            process.env.INTELBOARD_CANVAS_SMOKE
+              ? "./canvas-smoke.js"
+              : process.env.INTELBOARD_COLLAB_SMOKE
+                ? "./collaboration/smoke.js"
+                : "./smoke.js"
           );
           await runSmoke(window, service, smoke);
           service.collaboration?.close();
