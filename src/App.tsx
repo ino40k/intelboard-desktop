@@ -1,6 +1,6 @@
-import { ThemeSelect } from './ThemeSelect';
-import { readTheme } from './themes';
-import { useState, useEffect, useCallback, useId } from 'react';
+import { ThemeSelect } from "./ThemeSelect";
+import { readTheme } from "./themes";
+import { useState, useEffect, useCallback, useId } from "react";
 import {
   Plus,
   Search,
@@ -13,12 +13,14 @@ import {
   LoaderCircle,
   FolderOpen,
   ArrowLeft,
-} from 'lucide-react';
-import { api, transfer } from './api';
-import type { Board } from './model';
-import Canvas from './Canvas';
-import { draftKey } from './usePersistence';
-import { boardSchema } from '../shared/schema.js';
+} from "lucide-react";
+import { api, transfer } from "./api";
+import type { Board } from "./model";
+import Canvas from "./Canvas";
+import { draftKey } from "./usePersistence";
+import { boardSchema } from "../shared/schema.js";
+import { JoinCollaboration } from "./collaboration/Controls";
+import { collaboration } from "./collaboration/controller";
 export function Brand() {
   return (
     <span className="brand">
@@ -47,7 +49,7 @@ export function IconButton({
 }) {
   return (
     <button
-      className={`icon-button ${active ? 'active' : ''}`}
+      className={`icon-button ${active ? "active" : ""}`}
       title={label}
       aria-label={label}
       onClick={onClick}
@@ -69,17 +71,17 @@ export function Modal({
   const titleId = useId();
   useEffect(() => {
     const old = document.activeElement as HTMLElement;
-    const dialog = document.querySelector<HTMLDialogElement>('dialog');
+    const dialog = document.querySelector<HTMLDialogElement>("dialog");
     dialog?.showModal();
     const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         e.preventDefault();
         onClose();
       }
     };
-    dialog?.addEventListener('keydown', key);
+    dialog?.addEventListener("keydown", key);
     return () => {
-      dialog?.removeEventListener('keydown', key);
+      dialog?.removeEventListener("keydown", key);
       dialog?.close();
       old?.focus();
     };
@@ -94,7 +96,11 @@ export function Modal({
     >
       <div className="dialog-title">
         <h2 id={titleId}>{title}</h2>
-        <button className="icon-button" aria-label="Close dialog" onClick={onClose}>
+        <button
+          className="icon-button"
+          aria-label="Close dialog"
+          onClick={onClose}
+        >
           ×
         </button>
       </div>
@@ -103,32 +109,34 @@ export function Modal({
   );
 }
 export default function App() {
-  const [fatal, setFatal] = useState(''),
+  const [fatal, setFatal] = useState(""),
     [boards, setBoards] = useState<Board[]>([]),
     [board, setBoard] = useState<Board | null>(null),
     [loading, setLoading] = useState(true),
-    [filter, setFilter] = useState(''),
+    [filter, setFilter] = useState(""),
     [dialog, setDialog] = useState<{
-      kind: 'create' | 'rename' | 'delete' | 'draft';
+      kind: "create" | "rename" | "delete" | "draft";
       board?: Board;
     } | null>(null),
-    [title, setTitle] = useState(''),
-    [busy, setBusy] = useState(false);
+    [title, setTitle] = useState(""),
+    [busy, setBusy] = useState(false),
+    [joining, setJoining] = useState(false);
+  const closeJoin = useCallback(() => setJoining(false), []);
   const [theme, setTheme] = useState(readTheme);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
-      localStorage.setItem('intelboard.theme', theme);
+      localStorage.setItem("intelboard.theme", theme);
     } catch {
       /* Remain usable when storage is unavailable. */
     }
   }, [theme]);
   const refresh = useCallback(async () => {
-    const result = await api<Board[]>('/boards');
+    const result = await api<Board[]>("/boards");
     for (const item of result) {
       if (!boardSchema.safeParse({ ...item, edges: [] }).success)
         throw new Error(
-          'A board contains invalid data. Restore a local backup; the current data has been kept.',
+          "A board contains invalid data. Restore a local backup; the current data has been kept.",
         );
     }
     setBoards(result);
@@ -137,12 +145,12 @@ export default function App() {
   const open = useCallback(async (id: string) => {
     setLoading(true);
     try {
-      const result = await api<Board>('/boards/' + id);
+      const result = await api<Board>("/boards/" + id);
       if (!boardSchema.safeParse(result).success)
         throw new Error(
-          'This board contains invalid data. Restore a local backup; the current data has been kept.',
+          "This board contains invalid data. Restore a local backup; the current data has been kept.",
         );
-      const raw = localStorage.getItem(draftKey(id));
+      const raw = result.shared ? null : localStorage.getItem(draftKey(id));
       if (raw) {
         try {
           const draft = boardSchema.parse(JSON.parse(raw));
@@ -152,22 +160,25 @@ export default function App() {
             const same =
               JSON.stringify(draft.nodes) === JSON.stringify(result.nodes) &&
               JSON.stringify(draft.edges) === JSON.stringify(result.edges) &&
-              JSON.stringify(draft.viewport) === JSON.stringify(result.viewport) &&
+              JSON.stringify(draft.viewport) ===
+                JSON.stringify(result.viewport) &&
               draft.title === result.title;
             if (same) localStorage.removeItem(draftKey(id));
             else {
-              setDialog({ kind: 'draft', board: result });
+              setDialog({ kind: "draft", board: result });
               setLoading(false);
               return;
             }
           }
         } catch {
-          setFatal('A local recovery draft could not be read. Saved board data has been kept.');
+          setFatal(
+            "A local recovery draft could not be read. Saved board data has been kept.",
+          );
         }
       }
       setBoard(result);
-      localStorage.setItem('intelboard.last', id);
-      document.title = result.title + ' · Intelboard';
+      localStorage.setItem("intelboard.last", id);
+      document.title = result.title + " · Intelboard";
     } catch (e) {
       setFatal((e as Error).message);
     } finally {
@@ -181,7 +192,7 @@ export default function App() {
         if (!active) return;
         {
           const list = await refresh();
-          const last = localStorage.getItem('intelboard.last');
+          const last = localStorage.getItem("intelboard.last");
           if (last && list.some((b) => b.id === last)) await open(last);
         }
       } catch (e) {
@@ -200,27 +211,34 @@ export default function App() {
     if (!dialog) return;
     setBusy(true);
     try {
-      if (dialog.kind === 'create') {
-        const b = await api<Board>('/boards', {
-          method: 'POST',
-          body: JSON.stringify({ title: title.trim() || 'Untitled investigation' }),
+      if (dialog.kind === "create") {
+        const b = await api<Board>("/boards", {
+          method: "POST",
+          body: JSON.stringify({
+            title: title.trim() || "Untitled investigation",
+          }),
         });
         setDialog(null);
         await refresh();
         await open(b.id);
-      } else if (dialog.kind === 'rename' && dialog.board) {
-        const b = await api<Board>('/boards/' + dialog.board.id);
-        await api('/boards/' + b.id, {
-          method: 'PUT',
-          body: JSON.stringify({ ...b, title: title.trim() || b.title }),
-        });
+      } else if (dialog.kind === "rename" && dialog.board) {
+        const b = await api<Board>("/boards/" + dialog.board.id);
+        if (b.shared)
+          await collaboration("rename", b.id, {
+            title: title.trim() || b.title,
+          });
+        else
+          await api("/boards/" + b.id, {
+            method: "PUT",
+            body: JSON.stringify({ ...b, title: title.trim() || b.title }),
+          });
         setDialog(null);
         await refresh();
-      } else if (dialog.kind === 'delete' && dialog.board) {
-        await api('/boards/' + dialog.board.id, { method: 'DELETE' });
+      } else if (dialog.kind === "delete" && dialog.board) {
+        await api("/boards/" + dialog.board.id, { method: "DELETE" });
         localStorage.removeItem(draftKey(dialog.board.id));
-        if (localStorage.getItem('intelboard.last') === dialog.board.id)
-          localStorage.removeItem('intelboard.last');
+        if (localStorage.getItem("intelboard.last") === dialog.board.id)
+          localStorage.removeItem("intelboard.last");
         setDialog(null);
         await refresh();
       }
@@ -232,7 +250,7 @@ export default function App() {
   }
   async function duplicate(b: Board) {
     try {
-      await api('/boards/' + b.id + '/duplicate', { method: 'POST' });
+      await api("/boards/" + b.id + "/duplicate", { method: "POST" });
       await refresh();
     } catch (e) {
       setFatal((e as Error).message);
@@ -243,27 +261,32 @@ export default function App() {
       <div className="loading-screen">
         <Brand />
         <LoaderCircle className="spin" />
-        <p>{fatal || 'Opening your workspace…'}</p>
+        <p>{fatal || "Opening your workspace…"}</p>
         {fatal && <button onClick={() => location.reload()}>Retry</button>}
       </div>
     );
   if (board)
     return (
       <Canvas
-        key={board.id}
+        key={board.id + (board.shared ? ":shared" : "")}
         board={board}
         theme={theme}
         setTheme={setTheme}
         maxUploadMB={50}
+        onShared={async () => {
+          setBoard(await api<Board>("/boards/" + board.id));
+        }}
         onBack={async () => {
           setBoard(null);
-          localStorage.removeItem('intelboard.last');
-          document.title = 'Intelboard';
+          localStorage.removeItem("intelboard.last");
+          document.title = "Intelboard";
           await refresh();
         }}
       />
     );
-  const filtered = boards.filter((b) => b.title.toLowerCase().includes(filter.toLowerCase()));
+  const filtered = boards.filter((b) =>
+    b.title.toLowerCase().includes(filter.toLowerCase()),
+  );
   return (
     <main className="library">
       <header className="library-header">
@@ -274,7 +297,6 @@ export default function App() {
             PRIVATE WORKSPACE
           </span>
           <ThemeSelect value={theme} onChange={setTheme} />
-
         </div>
       </header>
       <section className="library-content">
@@ -282,15 +304,16 @@ export default function App() {
           <div>
             <div className="eyebrow">WORKSPACE</div>
             <h1>
-              Your boards<span>{boards.length.toString().padStart(2, '0')}</span>
+              Your boards
+              <span>{boards.length.toString().padStart(2, "0")}</span>
             </h1>
             <p>Sources, thoughts, and the connections between them.</p>
           </div>
           <button
             className="primary-button"
             onClick={() => {
-              setTitle('');
-              setDialog({ kind: 'create' });
+              setTitle("");
+              setDialog({ kind: "create" });
             }}
           >
             <Plus size={18} />
@@ -298,9 +321,42 @@ export default function App() {
           </button>
         </div>
         <div className="desktop-transfers">
-          <button onClick={async () => { try { await transfer('import'); await refresh(); } catch(e) { setFatal((e as Error).message); } }}>Import boards…</button>
-          <button disabled={!boards.length} onClick={async () => { try { await transfer('export-workspace'); } catch(e) { setFatal((e as Error).message); } }}>Export workspace…</button>
+          <button onClick={() => setJoining(true)}>Join shared board…</button>
+          <button
+            onClick={async () => {
+              try {
+                await transfer("import");
+                await refresh();
+              } catch (e) {
+                setFatal((e as Error).message);
+              }
+            }}
+          >
+            Import boards…
+          </button>
+          <button
+            disabled={!boards.length}
+            onClick={async () => {
+              try {
+                await transfer("export-workspace");
+              } catch (e) {
+                setFatal((e as Error).message);
+              }
+            }}
+          >
+            Export workspace…
+          </button>
         </div>
+        {joining && (
+          <JoinCollaboration
+            onClose={closeJoin}
+            onJoined={async (id) => {
+              setJoining(false);
+              await refresh();
+              await open(id);
+            }}
+          />
+        )}
         <div className="library-filter">
           <Search size={16} />
           <input
@@ -314,7 +370,7 @@ export default function App() {
         {fatal && (
           <div className="alert" role="alert">
             {fatal}
-            <button onClick={() => setFatal('')}>Dismiss</button>
+            <button onClick={() => setFatal("")}>Dismiss</button>
           </div>
         )}
         <div className="board-grid">
@@ -342,18 +398,32 @@ export default function App() {
                     label={`Rename ${b.title}`}
                     onClick={() => {
                       setTitle(b.title);
-                      setDialog({ kind: 'rename', board: b });
+                      setDialog({ kind: "rename", board: b });
                     }}
                   >
                     <span className="rename-icon">Aa</span>
                   </IconButton>
-                  <IconButton label={`Export ${b.title}`} onClick={async () => { try { await transfer('export-board', b.id); } catch(e) { setFatal((e as Error).message); } }}><FolderOpen size={14} /></IconButton>
-                  <IconButton label={`Duplicate ${b.title}`} onClick={() => void duplicate(b)}>
+                  <IconButton
+                    label={`Export ${b.title}`}
+                    onClick={async () => {
+                      try {
+                        await transfer("export-board", b.id);
+                      } catch (e) {
+                        setFatal((e as Error).message);
+                      }
+                    }}
+                  >
+                    <FolderOpen size={14} />
+                  </IconButton>
+                  <IconButton
+                    label={`Duplicate ${b.title}`}
+                    onClick={() => void duplicate(b)}
+                  >
                     <Copy size={14} />
                   </IconButton>
                   <IconButton
                     label={`Delete ${b.title}`}
-                    onClick={() => setDialog({ kind: 'delete', board: b })}
+                    onClick={() => setDialog({ kind: "delete", board: b })}
                   >
                     <Trash2 size={14} />
                   </IconButton>
@@ -362,10 +432,10 @@ export default function App() {
               <div className="board-meta">
                 <span>{b.count ?? b.nodes.length} items</span>
                 <time dateTime={b.updated_at}>
-                  Edited{' '}
+                  Edited{" "}
                   {new Date(b.updated_at).toLocaleDateString(undefined, {
-                    month: 'short',
-                    day: 'numeric',
+                    month: "short",
+                    day: "numeric",
                   })}
                 </time>
               </div>
@@ -374,20 +444,26 @@ export default function App() {
           <button
             className="new-board-tile"
             onClick={() => {
-              setTitle('');
-              setDialog({ kind: 'create' });
+              setTitle("");
+              setDialog({ kind: "create" });
             }}
           >
             <Plus size={24} strokeWidth={1.3} />
-            <span>{boards.length ? 'Start another board' : 'Create your first board'}</span>
+            <span>
+              {boards.length
+                ? "Start another board"
+                : "Create your first board"}
+            </span>
             <small>
               {boards.length
-                ? 'Make room for a new investigation.'
-                : 'Drop in a source. Follow a connection.'}
+                ? "Make room for a new investigation."
+                : "Drop in a source. Follow a connection."}
             </small>
           </button>
         </div>
-        {filter && !filtered.length && <p className="muted">No boards match “{filter}”.</p>}
+        {filter && !filtered.length && (
+          <p className="muted">No boards match “{filter}”.</p>
+        )}
         <footer className="library-footer">
           <FolderOpen size={14} />
           Stored on this computer<span>INTELBOARD / V1</span>
@@ -396,21 +472,21 @@ export default function App() {
       {dialog && (
         <Modal
           title={
-            dialog.kind === 'create'
-              ? 'New board'
-              : dialog.kind === 'rename'
-                ? 'Rename board'
-                : dialog.kind === 'draft'
-                  ? 'A recovered draft needs attention'
-                  : 'Delete board?'
+            dialog.kind === "create"
+              ? "New board"
+              : dialog.kind === "rename"
+                ? "Rename board"
+                : dialog.kind === "draft"
+                  ? "A recovered draft needs attention"
+                  : "Delete board?"
           }
           onClose={closeDialog}
         >
-          {dialog.kind === 'draft' ? (
+          {dialog.kind === "draft" ? (
             <>
               <p>
-                This board changed after your local draft was saved. You can recover the draft as a
-                separate board to keep both versions.
+                This board changed after your local draft was saved. You can
+                recover the draft as a separate board to keep both versions.
               </p>
               <div className="dialog-actions">
                 <button
@@ -426,14 +502,25 @@ export default function App() {
                   className="primary-button"
                   onClick={async () => {
                     try {
-                      const draft = JSON.parse(localStorage.getItem(draftKey(dialog.board!.id))!);
-                      const b = await api<Board>('/boards', {
-                        method: 'POST',
-                        body: JSON.stringify({ title: (dialog.board!.title + ' — recovered').slice(0, 200) }),
+                      const draft = JSON.parse(
+                        localStorage.getItem(draftKey(dialog.board!.id))!,
+                      );
+                      const b = await api<Board>("/boards", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          title: (dialog.board!.title + " — recovered").slice(
+                            0,
+                            200,
+                          ),
+                        }),
                       });
-                      await api('/boards/' + b.id, {
-                        method: 'PUT',
-                        body: JSON.stringify({ ...draft, title: b.title, revision: 0 }),
+                      await api("/boards/" + b.id, {
+                        method: "PUT",
+                        body: JSON.stringify({
+                          ...draft,
+                          title: b.title,
+                          revision: 0,
+                        }),
                       });
                       localStorage.removeItem(draftKey(dialog.board!.id));
                       setDialog(null);
@@ -449,10 +536,11 @@ export default function App() {
             </>
           ) : (
             <form onSubmit={submitBoard}>
-              {dialog.kind === 'delete' ? (
+              {dialog.kind === "delete" ? (
                 <p>
-                  Delete <strong>{dialog.board?.title}</strong> and all its canvas content? This
-                  cannot be undone. Original uploaded files are retained.
+                  Delete <strong>{dialog.board?.title}</strong> and all its
+                  canvas content? This cannot be undone. Original uploaded files
+                  are retained.
                 </p>
               ) : (
                 <label>
@@ -471,15 +559,19 @@ export default function App() {
                   Cancel
                 </button>
                 <button
-                  className={dialog.kind === 'delete' ? 'danger-button' : 'primary-button'}
+                  className={
+                    dialog.kind === "delete"
+                      ? "danger-button"
+                      : "primary-button"
+                  }
                   disabled={busy}
                 >
-                  {dialog.kind === 'delete'
-                    ? 'Delete board'
-                    : dialog.kind === 'rename'
-                      ? 'Rename'
-                      : 'Create board'}
-                  {dialog.kind === 'create' && <ArrowUpRight size={16} />}
+                  {dialog.kind === "delete"
+                    ? "Delete board"
+                    : dialog.kind === "rename"
+                      ? "Rename"
+                      : "Create board"}
+                  {dialog.kind === "create" && <ArrowUpRight size={16} />}
                 </button>
               </div>
             </form>
@@ -495,10 +587,21 @@ function BoardPreview({ board }: { board: Board }) {
     ys = board.nodes.map((n) => n.position.y),
     minX = Math.min(...xs) - 40,
     minY = Math.min(...ys) - 40,
-    maxX = Math.max(...board.nodes.map((n) => n.position.x + Number(n.style?.width || 280))) + 40,
-    maxY = Math.max(...board.nodes.map((n) => n.position.y + Number(n.style?.height || 220))) + 40;
+    maxX =
+      Math.max(
+        ...board.nodes.map((n) => n.position.x + Number(n.style?.width || 280)),
+      ) + 40,
+    maxY =
+      Math.max(
+        ...board.nodes.map(
+          (n) => n.position.y + Number(n.style?.height || 220),
+        ),
+      ) + 40;
   return (
-    <svg viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`} className="preview-svg">
+    <svg
+      viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`}
+      className="preview-svg"
+    >
       {board.nodes.map((n) => (
         <g key={n.id}>
           <rect
@@ -508,22 +611,24 @@ function BoardPreview({ board }: { board: Board }) {
             height={Number(n.style?.height || 220)}
             rx="6"
             fill={
-              n.data.kind === 'region'
-                ? 'var(--region-bg)'
-                : n.data.color === 'amber'
-                  ? 'var(--note-amber)'
-                  : 'var(--surface-raised)'
+              n.data.kind === "region"
+                ? "var(--region-bg)"
+                : n.data.color === "amber"
+                  ? "var(--note-amber)"
+                  : "var(--surface-raised)"
             }
             stroke="var(--border-strong)"
             strokeWidth="2"
           />
-          {n.data.kind !== 'region' &&
+          {n.data.kind !== "region" &&
             [0, 1, 2].map((i) => (
               <rect
                 key={i}
                 x={n.position.x + 20}
                 y={n.position.y + 25 + i * 19}
-                width={(Number(n.style?.width || 280) - 40) * (i === 2 ? 0.5 : 0.8)}
+                width={
+                  (Number(n.style?.width || 280) - 40) * (i === 2 ? 0.5 : 0.8)
+                }
                 height="5"
                 rx="2"
                 fill="var(--muted)"

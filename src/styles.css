@@ -4,7 +4,7 @@
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
-    'Segoe UI',
+    "Segoe UI",
     sans-serif;
   color-scheme: light;
   font-size: 14px;
@@ -32,7 +32,7 @@
   --shadow: 0 3px 14px #1820260b;
   --danger: #bb4a4a;
 }
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   color-scheme: dark;
   --minimap-mask: #121416bb;
   --bg: #17191c;
@@ -592,7 +592,11 @@ kbd {
   --xy-node-border-radius: 5px;
   --xy-background-color: var(--canvas);
   --xy-edge-stroke: var(--wire);
-  --xy-selection-background-color: color-mix(in srgb, var(--accent) 9%, transparent);
+  --xy-selection-background-color: color-mix(
+    in srgb,
+    var(--accent) 9%,
+    transparent
+  );
   --xy-selection-border: 1px solid var(--accent);
   --xy-minimap-background-color: var(--surface);
   --xy-minimap-mask-background-color: #0002;
@@ -1949,7 +1953,7 @@ kbd {
   border-color: transparent;
   background: transparent;
 }
-.inline-format-bar button[aria-pressed='true'] {
+.inline-format-bar button[aria-pressed="true"] {
   color: var(--accent);
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -1985,7 +1989,7 @@ kbd {
   color: var(--muted);
   pointer-events: none;
 }
-.inline-editor[aria-multiline='false'] {
+.inline-editor[aria-multiline="false"] {
   min-height: 39px;
 }
 .note-editor .inline-editor {
@@ -2165,6 +2169,226 @@ kbd {
   pointer-events: none;
 }
 
-.desktop-transfers { display:flex; gap:8px; margin-bottom:18px; }
-.desktop-transfers button { background:var(--surface-raised); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px 12px; cursor:pointer; }
-.desktop-transfers button:disabled { opacity:.5; cursor:default; }
+.desktop-transfers {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.desktop-transfers button {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.desktop-transfers button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.collaboration-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-raised);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.collaboration-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.collaboration-dot.synced {
+  background: #87bd7b;
+}
+.collaboration-dot.syncing,
+.collaboration-dot.pending,
+.collaboration-dot.attachments {
+  background: #edab55;
+}
+.collaboration-dot.error,
+.collaboration-dot.removed {
+  background: #d68dad;
+}
+.collaboration-status {
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 13px;
+}
+.collaboration-detail {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 8px 0 16px;
+}
+.collaboration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.collaboration-actions button {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  padding: 7px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.collaboration-invitation {
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.collaboration-invitation textarea {
+  min-height: 80px;
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+.collaboration-invitation > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.collaboration-members {
+  margin: 18px 0;
+  padding: 0;
+  list-style: none;
+}
+.collaboration-members li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.collaboration-members li > span:nth-child(2) {
+  flex: 1;
+}
+.collaboration-members small,
+.collaboration-recovery small {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.collaboration-members button {
+  font-size: 11px;
+  color: var(--muted);
+}
+.collaboration-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #17191c;
+  font-size: 12px;
+}
+.collaboration-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 14px 0;
+}
+.collaboration-progress progress {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.collaboration-recovery {
+  max-height: 260px;
+  overflow: auto;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.collaboration-recovery > div,
+.collaboration-recovery details > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+  font-size: 11px;
+}
+.collaboration-recovery span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.collaboration-recovery button {
+  color: var(--accent);
+  font-size: 11px;
+}
+.collaboration-cursors {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2000;
+}
+.collaboration-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  transition: transform 60ms linear;
+}
+.collaboration-cursor span {
+  color: #17191c;
+  margin-top: 15px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1.2;
+  max-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.collaboration-node-presence {
+  pointer-events: none;
+  position: absolute;
+  top: -22px;
+  right: 0;
+  border: 1px solid;
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  z-index: 6;
+  white-space: nowrap;
+}
+.shared-asset-pending {
+  display: flex;
+  flex: 1;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.shared-asset-pending strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 400;
+}

@@ -65,3 +65,7 @@ Native character-by-character insertion reproduced the empty-note defect before 
 ## Resized-region drag regression fix
 
 Region containment now uses measured dimensions, then persisted width/height, before creation-time styles. This matches React Flow's layout and NodeResizer updates. Regression cases cover enlarged/shrunken regions, resized notes, exact edges, overlap rejection and saved dimensions after reopening. The hidden desktop check physically enlarges a region using its resize handle, drags it with two contained notes, then reopens the board and repeats. Both notes must retain their offsets. A matching web-source patch is in `patches/region-drag.patch`; the original reference and live server remain unchanged.
+
+## Collaboration development preview
+
+The hosted Windows results above apply to the previously published desktop edition, not the new collaboration feature. See [COLLABORATION_VALIDATION.md](COLLABORATION_VALIDATION.md) for current local synthetic, real Tailcat and packaged Linux coverage and the remaining native Windows/two-machine acceptance.

@@ -15,3 +15,5 @@ coverage/
 .cache/
 .DS_Store
 Thumbs.db
+native/bin/
+native/network/*.exe

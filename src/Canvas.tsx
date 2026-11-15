@@ -1,9 +1,9 @@
-import { documentFormat } from '../shared/document.js';
-import { regionContains } from '../shared/geometry.js';
-import { InlineEditor } from './InlineText';
-import { ThemeSelect } from './ThemeSelect';
-import { themeMode, type ThemeId } from './themes';
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { documentFormat } from "../shared/document.js";
+import { regionContains } from "../shared/geometry.js";
+import { InlineEditor } from "./InlineText";
+import { ThemeSelect } from "./ThemeSelect";
+import { themeMode, type ThemeId } from "./themes";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -18,7 +18,7 @@ import {
   type EdgeChange,
   type Viewport,
   type Connection as FlowConnection,
-} from '@xyflow/react';
+} from "@xyflow/react";
 import {
   MousePointer2,
   Hand,
@@ -53,19 +53,21 @@ import {
   Keyboard,
   RefreshCw,
   LogOut,
-} from 'lucide-react';
-import { Brand, IconButton, Modal } from './App';
-import { ItemNode, ResearchEdge, CanvasContext } from './ItemNode';
-import { api, transfer } from './api';
-import { nodeSchema, edgeSchema } from '../shared/schema.js';
-import { videoMime, youtubeVideo } from '../shared/media.js';
-import { usePersistence } from './usePersistence';
+} from "lucide-react";
+import { Brand, IconButton, Modal } from "./App";
+import { ItemNode, ResearchEdge, CanvasContext } from "./ItemNode";
+import { api, transfer } from "./api";
+import { nodeSchema, edgeSchema } from "../shared/schema.js";
+import { videoMime, youtubeVideo } from "../shared/media.js";
+import { usePersistence } from "./usePersistence";
+import { useSharedBoard, collaboration } from "./collaboration/controller";
+import { CollaborationControls, RemoteCursors } from "./collaboration/Controls";
 import {
-  makeItem,
+  makeItem as baseMakeItem,
   duplicateItems,
   cleanNodes,
   cleanEdges,
-  uuid,
+  uuid as privateUUID,
   searchable,
   assetUrl,
   downloadUrl,
@@ -75,7 +77,7 @@ import {
   type Connection,
   type Kind,
   type Asset,
-} from './model';
+} from "./model";
 const nodeTypes = { research: ItemNode },
   edgeTypes = { research: ResearchEdge };
 const emptySnapshot = { nodes: [] as Item[], edges: [] as Connection[] };
@@ -90,34 +92,117 @@ export default function Canvas({
   setTheme,
   onBack,
   maxUploadMB,
+  onShared,
 }: {
   board: Board;
   theme: ThemeId;
   setTheme: (theme: ThemeId) => void;
   onBack: () => Promise<void>;
   maxUploadMB: number;
+  onShared: () => Promise<void>;
 }) {
-  const [nodes, setNodes] = useState<Item[]>(board.nodes),
-    [edges, setEdges] = useState<Connection[]>(board.edges),
-    [viewport, setViewport] = useState<Viewport>(board.viewport),
-    [title, setTitle] = useState(board.title),
+  const shared = useSharedBoard(board);
+  const uuid = useCallback(
+    () =>
+      board.shared
+        ? shared.ref.current?.newId() || privateUUID()
+        : privateUUID(),
+    [board.shared],
+  );
+  const makeItem = useCallback(
+    (...args: Parameters<typeof baseMakeItem>) => ({
+      ...baseMakeItem(...args),
+      id: uuid(),
+    }),
+    [uuid],
+  );
+  const [privateNodes, setPrivateNodes] = useState<Item[]>(board.nodes),
+    [privateEdges, setPrivateEdges] = useState<Connection[]>(board.edges),
+    [viewport, setViewport] = useState<Viewport>(() => {
+      if (board.shared)
+        try {
+          const saved = JSON.parse(
+            localStorage.getItem(
+              "intelboard.collaboration.viewport." + board.id,
+            ) || "null",
+          );
+          if (
+            saved &&
+            Number.isFinite(saved.x) &&
+            Number.isFinite(saved.y) &&
+            saved.zoom >= 0.05 &&
+            saved.zoom <= 4
+          )
+            return saved;
+        } catch {}
+      return board.viewport;
+    }),
+    [privateTitle, setPrivateTitle] = useState(board.title),
     [editing, setEditing] = useState<string | null>(null),
-    [tool, setTool] = useState('select'),
-    [query, setQuery] = useState(''),
+    [tool, setTool] = useState("select"),
+    [query, setQuery] = useState(""),
     [searchOpen, setSearchOpen] = useState(false),
     [linkOpen, setLinkOpen] = useState(false),
-    [linkInput, setLinkInput] = useState(''),
+    [linkInput, setLinkInput] = useState(""),
     [inspector, setInspector] = useState<string | null>(null),
     [viewer, setViewer] = useState<string | null>(null),
     [edgeEdit, setEdgeEdit] = useState<string | null>(null),
     [help, setHelp] = useState(false),
     [menu, setMenu] = useState(false),
     [minimap, setMinimap] = useState(false),
-    [notice, setNotice] = useState(''),
+    [notice, setNotice] = useState(""),
     [historyVersion, setHistoryVersion] = useState(0),
     [dropActive, setDropActive] = useState(false),
     [space, setSpace] = useState(false),
     [manipulating, setManipulating] = useState(false);
+  const nodes = board.shared ? shared.snapshot.nodes : privateNodes;
+  const edges = board.shared ? shared.snapshot.edges : privateEdges;
+  const title = board.shared ? shared.snapshot.title : privateTitle;
+  const setNodes = useCallback<React.Dispatch<React.SetStateAction<Item[]>>>(
+    (value) => {
+      if (board.shared) shared.ref.current?.setNodes(value);
+      else setPrivateNodes(value);
+    },
+    [board.shared],
+  );
+  const setEdges = useCallback<
+    React.Dispatch<React.SetStateAction<Connection[]>>
+  >(
+    (value) => {
+      if (board.shared) shared.ref.current?.setEdges(value);
+      else setPrivateEdges(value);
+    },
+    [board.shared],
+  );
+  const setTitle = useCallback<React.Dispatch<React.SetStateAction<string>>>(
+    (value) => {
+      if (board.shared) shared.ref.current?.setTitle(value);
+      else setPrivateTitle(value);
+    },
+    [board.shared],
+  );
+  const manipulate = useCallback((active: boolean) => {
+    setManipulating(active);
+    shared.ref.current?.interact(active);
+  }, []);
+  useEffect(() => {
+    const controller = shared.controller;
+    if (!controller) return;
+    controller.viewport = viewport;
+    try {
+      localStorage.setItem(
+        "intelboard.collaboration.viewport." + board.id,
+        JSON.stringify(viewport),
+      );
+    } catch {}
+    const timer = setTimeout(() => {
+      void collaboration("viewport", board.id, viewport).catch(() => {});
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [viewport, shared.controller, board.id]);
+  useEffect(() => {
+    shared.controller?.presence({ editing });
+  }, [editing, shared.controller]);
   const flow = useReactFlow<Item, Connection>(),
     fileInput = useRef<HTMLInputElement>(null),
     pointer = useRef<{ x: number; y: number } | null>(null),
@@ -125,18 +210,48 @@ export default function Canvas({
     past = useRef<(typeof emptySnapshot)[]>([]),
     future = useRef<(typeof emptySnapshot)[]>([]),
     clipboard = useRef<typeof emptySnapshot | null>(null),
-    drag = useRef<{ start: { x: number; y: number }; followers: Item[] } | null>(null),
+    drag = useRef<{
+      start: { x: number; y: number };
+      followers: Item[];
+    } | null>(null),
     titleFocus = useRef(title);
   state.current = { nodes, edges };
-  const { status, error, save, hasUnsaved } = usePersistence(
+  const privatePersistence = usePersistence(
     board,
     nodes,
     edges,
     viewport,
     title,
     () => {},
+    !board.shared,
   );
+  const status = board.shared
+    ? shared.controller?.error
+      ? "error"
+      : shared.controller?.outbox.length
+        ? "saving"
+        : "saved"
+    : privatePersistence.status;
+  const error = board.shared
+    ? shared.error || shared.controller?.error || ""
+    : privatePersistence.error;
+  const save = async () => {
+    if (board.shared) {
+      await shared.controller?.flush();
+      await collaboration("viewport", board.id, viewport);
+    } else await privatePersistence.save();
+  };
+  const hasUnsaved = () =>
+    board.shared
+      ? !shared.ready ||
+        !!shared.controller?.outbox.length ||
+        nodes.some((n) => n.data.loading)
+      : privatePersistence.hasUnsaved();
   const checkpoint = useCallback(() => {
+    if (board.shared) {
+      shared.ref.current?.checkpoint();
+      return;
+    }
     past.current.push({
       nodes: cleanNodes(state.current.nodes),
       edges: cleanEdges(state.current.edges),
@@ -146,6 +261,10 @@ export default function Canvas({
     setHistoryVersion((v) => v + 1);
   }, []);
   const undo = useCallback(() => {
+    if (board.shared) {
+      shared.ref.current?.undo();
+      return;
+    }
     const snapshot = past.current.pop();
     if (!snapshot) return;
     future.current.push({
@@ -158,6 +277,10 @@ export default function Canvas({
     setHistoryVersion((v) => v + 1);
   }, []);
   const redo = useCallback(() => {
+    if (board.shared) {
+      shared.ref.current?.undo(true);
+      return;
+    }
     const snapshot = future.current.pop();
     if (!snapshot) return;
     past.current.push({
@@ -174,7 +297,14 @@ export default function Canvas({
       setNodes((ns) =>
         ns.map((n) =>
           n.id === id
-            ? { ...n, data: { ...n.data, ...data, updatedAt: new Date().toISOString() } }
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  ...data,
+                  updatedAt: new Date().toISOString(),
+                },
+              }
             : n,
         ),
       ),
@@ -190,7 +320,7 @@ export default function Canvas({
   const notify = useCallback((message: string) => setNotice(message), []);
   useEffect(() => {
     if (!notice) return;
-    const t = setTimeout(() => setNotice(''), 7000);
+    const t = setTimeout(() => setNotice(""), 7000);
     return () => clearTimeout(t);
   }, [notice]);
   const point = useCallback(
@@ -203,12 +333,16 @@ export default function Canvas({
     [flow],
   );
   const add = useCallback(
-    (kind: Kind, data: Partial<ItemData> = {}, at?: { x: number; y: number }) => {
+    (
+      kind: Kind,
+      data: Partial<ItemData> = {},
+      at?: { x: number; y: number },
+    ) => {
       checkpoint();
       const n = { ...makeItem(kind, at || point(), data), selected: true };
       setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), n]);
-      if (kind === 'note' || kind === 'region') setEditing(n.id);
-      setTool('select');
+      if (kind === "note" || kind === "region") setEditing(n.id);
+      setTool("select");
       return n.id;
     },
     [checkpoint, point],
@@ -217,8 +351,8 @@ export default function Canvas({
     async (id: string, url: string) => {
       update(id, { loading: true });
       try {
-        const metadata = await api<Partial<ItemData>>('/metadata', {
-          method: 'POST',
+        const metadata = await api<Partial<ItemData>>("/metadata", {
+          method: "POST",
           body: JSON.stringify({ url }),
         });
         setNodes((ns) =>
@@ -251,11 +385,13 @@ export default function Canvas({
               : n,
           ),
         );
-        if (metadata.captureStatus !== 'captured')
-          notify('Link saved. ' + (metadata.captureStatus || 'Preview unavailable.'));
+        if (metadata.captureStatus !== "captured")
+          notify(
+            "Link saved. " + (metadata.captureStatus || "Preview unavailable."),
+          );
       } catch (e) {
         update(id, { loading: false, captureStatus: (e as Error).message });
-        notify('Link saved. Source preview could not be captured.');
+        notify("Link saved. Source preview could not be captured.");
       }
     },
     [update, notify],
@@ -264,19 +400,24 @@ export default function Canvas({
     (raw: string, at?: { x: number; y: number }) => {
       let url: URL;
       try {
-        url = new URL(/^https?:\/\//i.test(raw) ? raw : 'https://' + raw);
-        if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+        url = new URL(/^https?:\/\//i.test(raw) ? raw : "https://" + raw);
+        if (!["http:", "https:"].includes(url.protocol)) throw new Error();
       } catch {
-        notify('Enter a valid HTTP or HTTPS URL.');
+        notify("Enter a valid HTTP or HTTPS URL.");
         return;
       }
       const id = add(
-        'link',
-        { url: url.href, domain: url.hostname, title: url.hostname, loading: true },
+        "link",
+        {
+          url: url.href,
+          domain: url.hostname,
+          title: url.hostname,
+          loading: true,
+        },
         at,
       );
       void capture(id, url.href);
-      setLinkInput('');
+      setLinkInput("");
       setLinkOpen(false);
     },
     [add, capture, notify],
@@ -285,7 +426,9 @@ export default function Canvas({
     async (files: File[], at: { x: number; y: number }) => {
       if (!files.length) return;
       checkpoint();
-      const documentBatch = files.some((file) => documentFormat(file.name, file.type));
+      const documentBatch = files.some((file) =>
+        documentFormat(file.name, file.type),
+      );
       const videoBatch = files.some((file) => videoMime(file.name, file.type));
       const queued = files
         .filter((file) => {
@@ -298,14 +441,26 @@ export default function Canvas({
         .map((file, i) => {
           const isImage = /^image\/(png|jpeg|webp|gif|avif)$/.test(file.type);
           const localUrl =
-            isImage || videoMime(file.name, file.type) ? URL.createObjectURL(file) : undefined;
+            isImage || videoMime(file.name, file.type)
+              ? URL.createObjectURL(file)
+              : undefined;
           const n = makeItem(
-            isImage ? 'image' : 'file',
+            isImage ? "image" : "file",
             {
-              x: at.x + (i % 3) * (documentBatch ? 510 : videoBatch ? 450 : 350),
-              y: at.y + Math.floor(i / 3) * (documentBatch ? 590 : videoBatch ? 330 : 290),
+              x:
+                at.x + (i % 3) * (documentBatch ? 510 : videoBatch ? 450 : 350),
+              y:
+                at.y +
+                Math.floor(i / 3) *
+                  (documentBatch ? 590 : videoBatch ? 330 : 290),
             },
-            { filename: file.name, size: file.size, mime: file.type, loading: true, localUrl },
+            {
+              filename: file.name,
+              size: file.size,
+              mime: file.type,
+              loading: true,
+              localUrl,
+            },
           );
           return { file, n };
         });
@@ -316,8 +471,8 @@ export default function Canvas({
       for (const { file, n } of queued) {
         try {
           const form = new FormData();
-          form.append('file', file);
-          const a = await api<Asset>('/assets', { method: 'POST', body: form });
+          form.append("file", file);
+          const a = await api<Asset>("/assets", { method: "POST", body: form });
           setNodes((ns) =>
             ns.map((item) =>
               item.id === n.id
@@ -329,13 +484,15 @@ export default function Canvas({
                           height:
                             Math.max(
                               120,
-                              Math.round((320 * (a.height || 240)) / (a.width || 320)),
+                              Math.round(
+                                (320 * (a.height || 240)) / (a.width || 320),
+                              ),
                             ) + 34,
                         }
                       : item.style,
                     data: {
                       ...item.data,
-                      kind: a.thumbnail ? 'image' : 'file',
+                      kind: a.thumbnail ? "image" : "file",
                       assetId: a.id,
                       mime: a.mime,
                       filename: a.filename,
@@ -354,7 +511,7 @@ export default function Canvas({
         } catch (e) {
           update(n.id, {
             loading: false,
-            uploadError: 'Upload failed. Drop the file again to retry.',
+            uploadError: "Upload failed. Drop the file again to retry.",
           });
           notify((e as Error).message);
         }
@@ -364,27 +521,43 @@ export default function Canvas({
   );
   const remove = useCallback(() => {
     checkpoint();
-    const ids = new Set(state.current.nodes.filter((n) => n.selected).map((n) => n.id));
+    const ids = new Set(
+      state.current.nodes.filter((n) => n.selected).map((n) => n.id),
+    );
     setNodes((ns) => ns.filter((n) => !ids.has(n.id)));
-    setEdges((es) => es.filter((e) => !e.selected && !ids.has(e.source) && !ids.has(e.target)));
+    setEdges((es) =>
+      es.filter((e) => !e.selected && !ids.has(e.source) && !ids.has(e.target)),
+    );
     setInspector(null);
     setEditing(null);
   }, [checkpoint]);
   const duplicate = useCallback(() => {
     if (state.current.nodes.some((n) => n.selected && n.data.loading)) {
-      notify('Wait for the selected capture to finish before duplicating it.');
+      notify("Wait for the selected capture to finish before duplicating it.");
       return;
     }
     checkpoint();
-    const copied = duplicateItems(state.current.nodes, state.current.edges);
-    setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), ...copied.nodes]);
+    const copied = duplicateItems(
+      state.current.nodes,
+      state.current.edges,
+      32,
+      uuid,
+    );
+    setNodes((ns) => [
+      ...ns.map((n) => ({ ...n, selected: false })),
+      ...copied.nodes,
+    ]);
     setEdges((es) => [...es, ...copied.edges]);
   }, [checkpoint]);
   const grouping = useCallback(
     (ungroup = false) => {
       checkpoint();
       const groupId = ungroup ? undefined : uuid();
-      setNodes((ns) => ns.map((n) => (n.selected ? { ...n, data: { ...n.data, groupId } } : n)));
+      setNodes((ns) =>
+        ns.map((n) =>
+          n.selected ? { ...n, data: { ...n.data, groupId } } : n,
+        ),
+      );
     },
     [checkpoint],
   );
@@ -394,7 +567,12 @@ export default function Canvas({
       checkpoint();
       setEdges((es) => [
         ...es,
-        { ...connection, id: uuid(), type: 'research', data: { directed: true } },
+        {
+          ...connection,
+          id: uuid(),
+          type: "research",
+          data: { directed: true },
+        },
       ]);
       connectionStart.current = null;
     },
@@ -402,11 +580,13 @@ export default function Canvas({
   );
   const connectionStart = useRef<string | null>(null);
   const changes = useCallback(
-    (changes: NodeChange<Item>[]) => setNodes((ns) => applyNodeChanges(changes, ns)),
+    (changes: NodeChange<Item>[]) =>
+      setNodes((ns) => applyNodeChanges(changes, ns)),
     [],
   );
   const edgeChanges = useCallback(
-    (changes: EdgeChange<Connection>[]) => setEdges((es) => applyEdgeChanges(changes, es)),
+    (changes: EdgeChange<Connection>[]) =>
+      setEdges((es) => applyEdgeChanges(changes, es)),
     [],
   );
   const selected = nodes.filter((n) => n.selected),
@@ -426,28 +606,45 @@ export default function Canvas({
       edit: beginEdit,
       update,
       checkpoint,
-      manipulate: setManipulating,
+      manipulate,
+      collaboration: shared.controller,
       view,
       query,
-      connectMode: tool === 'connect',
+      connectMode: tool === "connect",
       editEdge,
     }),
-    [editing, beginEdit, update, checkpoint, view, query, tool, editEdge],
+    [
+      editing,
+      beginEdit,
+      update,
+      checkpoint,
+      view,
+      query,
+      tool,
+      editEdge,
+      manipulate,
+      shared.controller,
+    ],
   );
   const matching = useMemo(
-    () => (query ? nodes.filter((n) => searchable(n).includes(query.toLowerCase())) : []),
+    () =>
+      query
+        ? nodes.filter((n) => searchable(n).includes(query.toLowerCase()))
+        : [],
     [nodes, query],
   );
   const displayNodes = useMemo(
     () =>
-      nodes.map((n) => ({
-        ...n,
-        className: query
-          ? searchable(n).includes(query.toLowerCase())
-            ? 'search-match'
-            : 'search-dim'
-          : '',
-      })),
+      query
+        ? nodes.map((n) => ({
+            ...n,
+            className: query
+              ? searchable(n).includes(query.toLowerCase())
+                ? "search-match"
+                : "search-dim"
+              : "",
+          }))
+        : nodes,
     [nodes, query],
   );
   const jump = (n: Item) => {
@@ -456,10 +653,18 @@ export default function Canvas({
       n.position.y + Number(n.style?.height || 220) / 2,
       { zoom: 1, duration: 350 },
     );
-    setNodes((ns) => ns.map((item) => ({ ...item, selected: item.id === n.id })));
+    setNodes((ns) =>
+      ns.map((item) => ({ ...item, selected: item.id === n.id })),
+    );
   };
   const fit = useCallback(
-    () => void flow.fitView({ padding: 0.18, duration: 350, maxZoom: 1, minZoom: 0.05 }),
+    () =>
+      void flow.fitView({
+        padding: 0.18,
+        duration: 350,
+        maxZoom: 1,
+        minZoom: 0.05,
+      }),
     [flow],
   );
   useEffect(() => {
@@ -471,13 +676,14 @@ export default function Canvas({
         void uploadFiles(files, point(true));
         return;
       }
-      const raw = e.clipboardData?.getData('text/plain') || '';
+      const raw = e.clipboardData?.getData("text/plain") || "";
       if (!raw) return;
       e.preventDefault();
-      if (raw.startsWith('intelboard:')) {
+      if (raw.startsWith("intelboard:")) {
         try {
           const parsed = JSON.parse(raw.slice(11));
-          if (!Array.isArray(parsed.nodes) || parsed.nodes.length > 1000) throw 0;
+          if (!Array.isArray(parsed.nodes) || parsed.nodes.length > 1000)
+            throw 0;
           const safeNodes = parsed.nodes.map((n: unknown) => ({
             ...nodeSchema.parse(n),
             selected: true,
@@ -486,8 +692,13 @@ export default function Canvas({
             edgeSchema.parse(e),
           ) as Connection[];
           const nodeIds = new Set(safeNodes.map((n) => n.id));
-          if (safeEdges.some((e) => !nodeIds.has(e.source) || !nodeIds.has(e.target))) throw 0;
-          const copied = duplicateItems(safeNodes, safeEdges);
+          if (
+            safeEdges.some(
+              (e) => !nodeIds.has(e.source) || !nodeIds.has(e.target),
+            )
+          )
+            throw 0;
+          const copied = duplicateItems(safeNodes, safeEdges, 32, uuid);
           const origin = point(true),
             minX = Math.min(...copied.nodes.map((n) => n.position.x)),
             minY = Math.min(...copied.nodes.map((n) => n.position.y));
@@ -496,18 +707,22 @@ export default function Canvas({
             ...ns.map((n) => ({ ...n, selected: false })),
             ...copied.nodes.map((n) => ({
               ...n,
-              position: { x: n.position.x - minX + origin.x, y: n.position.y - minY + origin.y },
+              position: {
+                x: n.position.x - minX + origin.x,
+                y: n.position.y - minY + origin.y,
+              },
             })),
           ]);
           setEdges((es) => [...es, ...copied.edges]);
           return;
         } catch {
-          notify('The copied board elements could not be read.');
+          notify("The copied board elements could not be read.");
           return;
         }
       }
-      if (/^https?:\/\/\S+$/i.test(raw.trim())) addLink(raw.trim(), point(true));
-      else add('note', { text: raw }, point(true));
+      if (/^https?:\/\/\S+$/i.test(raw.trim()))
+        addLink(raw.trim(), point(true));
+      else add("note", { text: raw }, point(true));
     }
     function copy(e: ClipboardEvent) {
       if (isInput(e.target)) return;
@@ -515,89 +730,95 @@ export default function Canvas({
       if (!ns.length) return;
       if (ns.some((n) => n.data.loading)) {
         e.preventDefault();
-        notify('Wait for the selected capture to finish before copying it.');
+        notify("Wait for the selected capture to finish before copying it.");
         return;
       }
       const ids = new Set(ns.map((n) => n.id));
       clipboard.current = {
         nodes: cleanNodes(ns),
         edges: cleanEdges(
-          state.current.edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+          state.current.edges.filter(
+            (e) => ids.has(e.source) && ids.has(e.target),
+          ),
         ),
       };
       e.preventDefault();
-      e.clipboardData?.setData('text/plain', 'intelboard:' + JSON.stringify(clipboard.current));
-      notify(`${ns.length} ${ns.length === 1 ? 'item' : 'items'} copied`);
+      e.clipboardData?.setData(
+        "text/plain",
+        "intelboard:" + JSON.stringify(clipboard.current),
+      );
+      notify(`${ns.length} ${ns.length === 1 ? "item" : "items"} copied`);
     }
     function key(e: KeyboardEvent) {
       if (isInput(e.target)) return;
       const command = e.metaKey || e.ctrlKey,
         key = e.key.toLowerCase();
-      if (command && key === 'z') {
+      if (command && key === "z") {
         e.preventDefault();
         e.shiftKey ? redo() : undo();
-      } else if (command && key === 'y') {
+      } else if (command && key === "y") {
         e.preventDefault();
         redo();
-      } else if (command && key === 'a') {
+      } else if (command && key === "a") {
         e.preventDefault();
         setNodes((ns) => ns.map((n) => ({ ...n, selected: true })));
-      } else if (command && key === 'd') {
+      } else if (command && key === "d") {
         e.preventDefault();
         duplicate();
-      } else if (command && key === 'g') {
+      } else if (command && key === "g") {
         e.preventDefault();
         grouping(e.shiftKey);
-      } else if (command && key === 'f') {
+      } else if (command && key === "f") {
         e.preventDefault();
         setSearchOpen(true);
-      } else if (key === 'delete' || key === 'backspace') {
+      } else if (key === "delete" || key === "backspace") {
         e.preventDefault();
         remove();
-      } else if (key === 'escape') {
+      } else if (key === "escape") {
         setEditing(null);
         setInspector(null);
         setSearchOpen(false);
-        setQuery('');
+        setQuery("");
         setLinkOpen(false);
         setMenu(false);
-        setTool('select');
+        setTool("select");
         connectionStart.current = null;
         setNodes((ns) => ns.map((n) => ({ ...n, selected: false })));
         setEdges((es) => es.map((e) => ({ ...e, selected: false })));
       } else if (!command && !e.altKey) {
-        if (key === 'n') {
+        if (key === "n") {
           e.preventDefault();
-          add('note', {}, point(true));
+          add("note", {}, point(true));
         }
-        if (key === 'l') setLinkOpen((v) => !v);
-        if (key === 'r') add('region', { title: 'Untitled region' }, point(true));
-        if (key === 'v') setTool('select');
-        if (key === 'h') setTool('hand');
-        if (key === 'c') setTool('connect');
-        if (key === 'f') fit();
-        if (key === '?') setHelp(true);
-        if (key === ' ') {
+        if (key === "l") setLinkOpen((v) => !v);
+        if (key === "r")
+          add("region", { title: "Untitled region" }, point(true));
+        if (key === "v") setTool("select");
+        if (key === "h") setTool("hand");
+        if (key === "c") setTool("connect");
+        if (key === "f") fit();
+        if (key === "?") setHelp(true);
+        if (key === " ") {
           e.preventDefault();
           setSpace(true);
         }
       }
     }
     const up = (e: KeyboardEvent) => {
-      if (e.key === ' ') setSpace(false);
+      if (e.key === " ") setSpace(false);
     };
     const blur = () => setSpace(false);
-    document.addEventListener('paste', paste);
-    document.addEventListener('copy', copy);
-    document.addEventListener('keydown', key);
-    document.addEventListener('keyup', up);
-    window.addEventListener('blur', blur);
+    document.addEventListener("paste", paste);
+    document.addEventListener("copy", copy);
+    document.addEventListener("keydown", key);
+    document.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
     return () => {
-      document.removeEventListener('paste', paste);
-      document.removeEventListener('copy', copy);
-      document.removeEventListener('keydown', key);
-      document.removeEventListener('keyup', up);
-      window.removeEventListener('blur', blur);
+      document.removeEventListener("paste", paste);
+      document.removeEventListener("copy", copy);
+      document.removeEventListener("keydown", key);
+      document.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
     };
   }, [
     add,
@@ -620,16 +841,28 @@ export default function Canvas({
     currentViewer = nodes.find((n) => n.id === viewer),
     currentEdge = edges.find((e) => e.id === edgeEdit);
   const contextX = single
-    ? Math.max(86, Math.min(innerWidth - 430, single.position.x * viewport.zoom + viewport.x))
+    ? Math.max(
+        86,
+        Math.min(
+          innerWidth - 430,
+          single.position.x * viewport.zoom + viewport.x,
+        ),
+      )
     : innerWidth / 2 - 180;
   const contextY = single
-    ? Math.max(80, Math.min(innerHeight - 110, single.position.y * viewport.zoom + viewport.y + 12))
+    ? Math.max(
+        80,
+        Math.min(
+          innerHeight - 110,
+          single.position.y * viewport.zoom + viewport.y + 12,
+        ),
+      )
     : innerHeight - 126;
   async function back() {
     await save();
     if (hasUnsaved()) {
       notify(
-        'Wait for source captures, uploads, and pending saves to finish before leaving this board.',
+        "Wait for source captures, uploads, and pending saves to finish before leaving this board.",
       );
       return;
     }
@@ -638,7 +871,7 @@ export default function Canvas({
   return (
     <CanvasContext.Provider value={context}>
       <main
-        className={`workspace ${tool === 'connect' ? 'connecting' : ''} ${manipulating ? 'canvas-manipulating' : ''}`}
+        className={`workspace ${tool === "connect" ? "connecting" : ""} ${manipulating ? "canvas-manipulating" : ""}`}
       >
         <header className="canvas-header">
           <div className="header-left">
@@ -659,39 +892,68 @@ export default function Canvas({
               maxLength={200}
               onChange={(e) => setTitle(e.target.value)}
               onBlur={() => {
-                if (!title.trim()) setTitle(titleFocus.current || 'Untitled board');
+                if (!title.trim())
+                  setTitle(titleFocus.current || "Untitled board");
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur();
+                if (e.key === "Enter") e.currentTarget.blur();
               }}
             />
           </div>
           <div className="header-right">
-            <button className="secondary-button" onClick={async () => {
-              await save();
-              if (hasUnsaved()) { notify('Wait for pending saves and file imports before exporting.'); return; }
-              try { await transfer('export-board', board.id); } catch(e) { notify((e as Error).message); }
-            }}>Export board…</button>
+            <CollaborationControls
+              boardId={board.id}
+              controller={shared.controller}
+              shared={!!board.shared}
+              onShare={async () => {
+                await save();
+                if (hasUnsaved())
+                  throw new Error(
+                    "Wait for local saves and file imports before sharing.",
+                  );
+                await collaboration("share", board.id);
+                await onShared();
+              }}
+            />
+            <button
+              className="secondary-button"
+              onClick={async () => {
+                await save();
+                if (hasUnsaved()) {
+                  notify(
+                    "Wait for pending saves and file imports before exporting.",
+                  );
+                  return;
+                }
+                try {
+                  await transfer("export-board", board.id);
+                } catch (e) {
+                  notify((e as Error).message);
+                }
+              }}
+            >
+              Export board…
+            </button>
             <div
-              className={`save-status ${status === 'error' ? 'error' : ''}`}
-              title={error || 'Changes save automatically'}
+              className={`save-status ${status === "error" ? "error" : ""}`}
+              title={error || "Changes save automatically"}
               role="status"
             >
-              {status === 'saved' ? (
+              {status === "saved" ? (
                 <CheckCircle2 size={15} />
-              ) : status === 'error' ? (
+              ) : status === "error" ? (
                 <AlertCircle size={15} />
               ) : (
                 <LoaderCircle size={14} className="spin" />
               )}
               <span>
-                {status === 'saved'
-                  ? 'All changes saved'
-                  : status === 'error'
-                    ? 'Not saved'
-                    : status === 'saving'
-                      ? 'Saving…'
-                      : 'Saving…'}
+                {status === "saved"
+                  ? "All changes saved"
+                  : status === "error"
+                    ? "Not saved"
+                    : status === "saving"
+                      ? "Saving…"
+                      : "Saving…"}
               </span>
             </div>
             <span className="header-divider" />
@@ -702,7 +964,11 @@ export default function Canvas({
             >
               <Search size={18} />
             </IconButton>
-            <IconButton label="Board menu" onClick={() => setMenu((v) => !v)} active={menu}>
+            <IconButton
+              label="Board menu"
+              onClick={() => setMenu((v) => !v)}
+              active={menu}
+            >
               <MoreHorizontal size={20} />
             </IconButton>
           </div>
@@ -716,36 +982,60 @@ export default function Canvas({
         )}
         <div
           className="canvas"
+          inert={
+            !!board.shared &&
+            (!shared.ready ||
+              !!shared.controller?.resetting ||
+              shared.controller?.network?.active === false)
+          }
           data-testid="canvas"
           onDoubleClick={(e) => {
             if (
-              (e.target as HTMLElement).classList.contains('react-flow__pane') &&
-              tool === 'select'
+              (e.target as HTMLElement).classList.contains(
+                "react-flow__pane",
+              ) &&
+              tool === "select"
             )
-              add('note', {}, flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+              add(
+                "note",
+                {},
+                flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+              );
           }}
           onMouseMove={(e) => {
-            if (!(e.target as HTMLElement).closest('.react-flow__panel'))
+            shared.controller?.presence({
+              cursor: flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+            });
+            if (!(e.target as HTMLElement).closest(".react-flow__panel"))
               pointer.current = { x: e.clientX, y: e.clientY };
           }}
           onDragOver={(e) => {
             e.preventDefault();
-            e.dataTransfer.dropEffect = 'copy';
+            e.dataTransfer.dropEffect = "copy";
             setDropActive(true);
           }}
           onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropActive(false);
+            if (!e.currentTarget.contains(e.relatedTarget as Node))
+              setDropActive(false);
           }}
           onDrop={(e) => {
             e.preventDefault();
             setDropActive(false);
             const files = Array.from(e.dataTransfer.files);
             if (files.length)
-              void uploadFiles(files, flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+              void uploadFiles(
+                files,
+                flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+              );
             else {
               const text =
-                e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
-              if (text) addLink(text, flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+                e.dataTransfer.getData("text/uri-list") ||
+                e.dataTransfer.getData("text/plain");
+              if (text)
+                addLink(
+                  text,
+                  flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }),
+                );
             }
           }}
         >
@@ -763,17 +1053,17 @@ export default function Canvas({
             onMoveEnd={() => setManipulating(false)}
             minZoom={0.05}
             maxZoom={4}
-            selectionOnDrag={tool === 'select' && !space}
+            selectionOnDrag={tool === "select" && !space}
             selectionMode={SelectionMode.Partial}
             onSelectionStart={() => setManipulating(true)}
             onSelectionEnd={() => setManipulating(false)}
-            panOnDrag={tool === 'hand' || space ? true : [1, 2]}
+            panOnDrag={tool === "hand" || space ? true : [1, 2]}
             panOnScroll
             zoomOnScroll={false}
             zoomOnPinch
             zoomOnDoubleClick={false}
             panActivationKeyCode="Space"
-            zoomActivationKeyCode={['Control', 'Meta']}
+            zoomActivationKeyCode={["Control", "Meta"]}
             multiSelectionKeyCode="Shift"
             selectionKeyCode="Shift"
             deleteKeyCode={null}
@@ -782,7 +1072,7 @@ export default function Canvas({
             elevateNodesOnSelect={false}
             colorMode={themeMode(theme)}
             onNodeDragStart={(_e, n, selection) => {
-              setManipulating(true);
+              manipulate(true);
               checkpoint();
               const selectedIds = new Set(selection.map((n) => n.id));
               const followers = state.current.nodes.filter(
@@ -790,7 +1080,7 @@ export default function Canvas({
                   other.id !== n.id &&
                   !selectedIds.has(other.id) &&
                   ((n.data.groupId && other.data.groupId === n.data.groupId) ||
-                    (n.data.kind === 'region' && regionContains(n, other))),
+                    (n.data.kind === "region" && regionContains(n, other))),
               );
               drag.current = { start: n.position, followers };
             }}
@@ -815,37 +1105,42 @@ export default function Canvas({
             }}
             onNodeDragStop={() => {
               drag.current = null;
-              setManipulating(false);
+              manipulate(false);
             }}
             onSelectionDragStart={() => {
               checkpoint();
-              setManipulating(true);
+              manipulate(true);
             }}
-            onSelectionDragStop={() => setManipulating(false)}
+            onSelectionDragStop={() => manipulate(false)}
             onNodeClick={(event, n) => {
               // React Flow owns handle clicks and preserves their source/target IDs.
               // Do not also create a second edge with the element-click defaults.
-              if ((event.target as Element).closest('.react-flow__handle')) return;
-              if (tool === 'connect') {
-                if (connectionStart.current && connectionStart.current !== n.id) {
+              if ((event.target as Element).closest(".react-flow__handle"))
+                return;
+              if (tool === "connect") {
+                if (
+                  connectionStart.current &&
+                  connectionStart.current !== n.id
+                ) {
                   connect({
                     source: connectionStart.current,
                     target: n.id,
-                    sourceHandle: 'out',
-                    targetHandle: 'in',
+                    sourceHandle: "out",
+                    targetHandle: "in",
                   });
                   connectionStart.current = null;
                 } else {
                   connectionStart.current = n.id;
-                  notify('Choose another item to connect.');
+                  notify("Choose another item to connect.");
                 }
               }
             }}
             onNodeDoubleClick={(_e, n) => {
-              if (n.data.kind === 'note' || n.data.kind === 'region') beginEdit(n.id);
-              else if (n.data.kind === 'image') setViewer(n.id);
-              else if (n.data.kind === 'link' && n.data.url)
-                window.open(n.data.url, '_blank', 'noopener,noreferrer');
+              if (n.data.kind === "note" || n.data.kind === "region")
+                beginEdit(n.id);
+              else if (n.data.kind === "image") setViewer(n.id);
+              else if (n.data.kind === "link" && n.data.url)
+                window.open(n.data.url, "_blank", "noopener,noreferrer");
               else {
                 checkpoint();
                 setInspector(n.id);
@@ -858,21 +1153,26 @@ export default function Canvas({
               setMenu(false);
             }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--grid)" />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={24}
+              size={1}
+              color="var(--grid)"
+            />
             {minimap && (
               <MiniMap
                 position="bottom-right"
                 pannable
                 zoomable
                 nodeColor={(n) =>
-                  n.data.kind === 'region'
-                    ? 'var(--minimap-region)'
-                    : n.data.kind === 'note'
-                      ? 'var(--minimap-note)'
-                      : 'var(--minimap-item)'
+                  n.data.kind === "region"
+                    ? "var(--minimap-region)"
+                    : n.data.kind === "note"
+                      ? "var(--minimap-note)"
+                      : "var(--minimap-item)"
                 }
                 maskColor="var(--minimap-mask)"
-                style={{ background: 'var(--surface)' }}
+                style={{ background: "var(--surface)" }}
               />
             )}
             <svg>
@@ -910,7 +1210,7 @@ export default function Canvas({
               </h1>
               <p>Paste a link, drop a file, or put a thought on the board.</p>
               <div className="empty-actions">
-                <button onClick={() => add('note')}>
+                <button onClick={() => add("note")}>
                   <StickyNote size={17} />
                   Write a note<kbd>N</kbd>
                 </button>
@@ -929,53 +1229,77 @@ export default function Canvas({
               <p>Images, documents, and files · up to {maxUploadMB} MB each</p>
             </div>
           )}
+          <RemoteCursors controller={shared.controller} viewport={viewport} />
         </div>
         <nav className="tool-dock" aria-label="Canvas tools">
           <IconButton
             label="Select (V)"
-            onClick={() => setTool('select')}
-            active={tool === 'select'}
+            onClick={() => setTool("select")}
+            active={tool === "select"}
           >
             <MousePointer2 size={19} />
           </IconButton>
           <IconButton
             label="Pan (H or hold Space)"
-            onClick={() => setTool('hand')}
-            active={tool === 'hand'}
+            onClick={() => setTool("hand")}
+            active={tool === "hand"}
           >
             <Hand size={19} />
           </IconButton>
           <div className="dock-divider" />
-          <IconButton label="Add note (N)" onClick={() => add('note')}>
+          <IconButton label="Add note (N)" onClick={() => add("note")}>
             <StickyNote size={19} />
           </IconButton>
-          <IconButton label="Add link (L)" onClick={() => setLinkOpen((v) => !v)} active={linkOpen}>
+          <IconButton
+            label="Add link (L)"
+            onClick={() => setLinkOpen((v) => !v)}
+            active={linkOpen}
+          >
             <Link2 size={19} />
           </IconButton>
-          <IconButton label="Upload image or file" onClick={() => fileInput.current?.click()}>
+          <IconButton
+            label="Upload image or file"
+            onClick={() => fileInput.current?.click()}
+          >
             <Upload size={19} />
           </IconButton>
           <IconButton
             label="Connect items (C)"
             onClick={() => {
-              setTool(tool === 'connect' ? 'select' : 'connect');
+              setTool(tool === "connect" ? "select" : "connect");
               connectionStart.current = null;
             }}
-            active={tool === 'connect'}
+            active={tool === "connect"}
           >
             <Waypoints size={19} />
           </IconButton>
           <IconButton
             label="Add region (R)"
-            onClick={() => add('region', { title: 'Untitled region' })}
+            onClick={() => add("region", { title: "Untitled region" })}
           >
             <SquareDashed size={19} />
           </IconButton>
           <div className="dock-divider" />
-          <IconButton label="Undo (Ctrl+Z)" onClick={undo} disabled={!past.current.length}>
+          <IconButton
+            label="Undo (Ctrl+Z)"
+            onClick={undo}
+            disabled={
+              board.shared
+                ? !shared.controller?.undoManager.canUndo()
+                : !past.current.length
+            }
+          >
             <Undo2 size={18} />
           </IconButton>
-          <IconButton label="Redo (Ctrl+Shift+Z)" onClick={redo} disabled={!future.current.length}>
+          <IconButton
+            label="Redo (Ctrl+Shift+Z)"
+            onClick={redo}
+            disabled={
+              board.shared
+                ? !shared.controller?.undoManager.canRedo()
+                : !future.current.length
+            }
+          >
             <Redo2 size={18} />
           </IconButton>
         </nav>
@@ -986,7 +1310,7 @@ export default function Canvas({
           multiple
           onChange={(e) => {
             void uploadFiles(Array.from(e.target.files || []), point());
-            e.target.value = '';
+            e.target.value = "";
           }}
         />
         {linkOpen && (
@@ -1006,7 +1330,11 @@ export default function Canvas({
               onChange={(e) => setLinkInput(e.target.value)}
               required
             />
-            <button className="confirm-link" title="Add source" aria-label="Add source">
+            <button
+              className="confirm-link"
+              title="Add source"
+              aria-label="Add source"
+            >
               <Check size={17} />
             </button>
             <button
@@ -1019,132 +1347,156 @@ export default function Canvas({
             </button>
           </form>
         )}
-        {(selected.length > 0 || selectedEdges.length > 0) && !editing && !inspector && (
-          <div className="context-toolbar" style={{ left: contextX, top: contextY }}>
-            <span className="selection-count">
-              {selected.length > 1
-                ? `${selected.length} items`
-                : single
-                  ? single.data.kind
-                  : selectedEdges.length + ' connections'}
-            </span>
-            <span className="toolbar-divider" />
-            {single && (
-              <IconButton
-                label="Edit selected item"
-                onClick={() => {
-                  if (single.data.kind === 'note' || single.data.kind === 'region')
-                    beginEdit(single.id);
-                  else {
-                    checkpoint();
-                    setInspector(single.id);
-                  }
-                }}
-              >
-                <Pencil size={15} />
-              </IconButton>
-            )}
-            {selected.length > 0 && (
-              <>
-                <IconButton label="Duplicate selection (Ctrl+D)" onClick={duplicate}>
-                  <Copy size={15} />
-                </IconButton>
+        {(selected.length > 0 || selectedEdges.length > 0) &&
+          !editing &&
+          !inspector && (
+            <div
+              className="context-toolbar"
+              style={{ left: contextX, top: contextY }}
+            >
+              <span className="selection-count">
+                {selected.length > 1
+                  ? `${selected.length} items`
+                  : single
+                    ? single.data.kind
+                    : selectedEdges.length + " connections"}
+              </span>
+              <span className="toolbar-divider" />
+              {single && (
                 <IconButton
-                  label="Bring forward"
+                  label="Edit selected item"
                   onClick={() => {
-                    checkpoint();
-                    setNodes((ns) =>
-                      ns.map((n) =>
-                        n.selected
-                          ? {
-                              ...n,
-                              zIndex: Math.min(
-                                9999,
-                                Math.max(0, ...ns.map((n) => n.zIndex || 0)) + 1,
-                              ),
-                            }
-                          : n,
-                      ),
-                    );
+                    if (
+                      single.data.kind === "note" ||
+                      single.data.kind === "region"
+                    )
+                      beginEdit(single.id);
+                    else {
+                      checkpoint();
+                      setInspector(single.id);
+                    }
                   }}
                 >
-                  <ArrowUpToLine size={16} />
+                  <Pencil size={15} />
                 </IconButton>
-                <IconButton
-                  label="Send backward"
-                  onClick={() => {
-                    checkpoint();
-                    setNodes((ns) =>
-                      ns.map((n) =>
-                        n.selected
-                          ? {
-                              ...n,
-                              zIndex: Math.max(
-                                -9999,
-                                Math.min(
-                                  0,
-                                  ...ns
-                                    .filter((n) => n.data.kind !== 'region')
-                                    .map((n) => n.zIndex || 0),
-                                ) - 1,
-                              ),
-                            }
-                          : n,
-                      ),
-                    );
-                  }}
-                >
-                  <ArrowDownToLine size={16} />
-                </IconButton>
-                {selected.length > 1 && (
-                  <IconButton label="Group selection (Ctrl+G)" onClick={() => grouping()}>
-                    <Group size={16} />
-                  </IconButton>
-                )}
-                {selected.some((n) => n.data.groupId) && (
-                  <IconButton label="Ungroup (Ctrl+Shift+G)" onClick={() => grouping(true)}>
-                    <Ungroup size={16} />
-                  </IconButton>
-                )}
-                {single?.data.assetId && (
-                  <a
-                    className="icon-button"
-                    aria-label="Download original"
-                    title="Download original"
-                    href={downloadUrl(single.data.assetId)}
+              )}
+              {selected.length > 0 && (
+                <>
+                  <IconButton
+                    label="Duplicate selection (Ctrl+D)"
+                    onClick={duplicate}
                   >
-                    <Download size={15} />
-                  </a>
-                )}
-                {(single?.data.kind === 'note' || single?.data.kind === 'region') && (
-                  <div className="color-options">
-                    {['neutral', 'amber', 'blue', 'green', 'rose'].map((color) => (
-                      <button
-                        key={color}
-                        className={`color-dot color-${color} ${single.data.color === color ? 'chosen' : ''}`}
-                        aria-label={`${color} color`}
-                        title={color}
-                        onClick={() => {
-                          checkpoint();
-                          update(single.id, { color });
-                        }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-            {selectedEdges.length === 1 && !selected.length && (
-              <IconButton label="Edit connection" onClick={() => editEdge(selectedEdges[0].id)}>
-                <Pencil size={16} />
+                    <Copy size={15} />
+                  </IconButton>
+                  <IconButton
+                    label="Bring forward"
+                    onClick={() => {
+                      checkpoint();
+                      setNodes((ns) =>
+                        ns.map((n) =>
+                          n.selected
+                            ? {
+                                ...n,
+                                zIndex: Math.min(
+                                  9999,
+                                  Math.max(0, ...ns.map((n) => n.zIndex || 0)) +
+                                    1,
+                                ),
+                              }
+                            : n,
+                        ),
+                      );
+                    }}
+                  >
+                    <ArrowUpToLine size={16} />
+                  </IconButton>
+                  <IconButton
+                    label="Send backward"
+                    onClick={() => {
+                      checkpoint();
+                      setNodes((ns) =>
+                        ns.map((n) =>
+                          n.selected
+                            ? {
+                                ...n,
+                                zIndex: Math.max(
+                                  -9999,
+                                  Math.min(
+                                    0,
+                                    ...ns
+                                      .filter((n) => n.data.kind !== "region")
+                                      .map((n) => n.zIndex || 0),
+                                  ) - 1,
+                                ),
+                              }
+                            : n,
+                        ),
+                      );
+                    }}
+                  >
+                    <ArrowDownToLine size={16} />
+                  </IconButton>
+                  {selected.length > 1 && (
+                    <IconButton
+                      label="Group selection (Ctrl+G)"
+                      onClick={() => grouping()}
+                    >
+                      <Group size={16} />
+                    </IconButton>
+                  )}
+                  {selected.some((n) => n.data.groupId) && (
+                    <IconButton
+                      label="Ungroup (Ctrl+Shift+G)"
+                      onClick={() => grouping(true)}
+                    >
+                      <Ungroup size={16} />
+                    </IconButton>
+                  )}
+                  {single?.data.assetId && (
+                    <a
+                      className="icon-button"
+                      aria-label="Download original"
+                      title="Download original"
+                      href={downloadUrl(single.data.assetId)}
+                    >
+                      <Download size={15} />
+                    </a>
+                  )}
+                  {(single?.data.kind === "note" ||
+                    single?.data.kind === "region") && (
+                    <div className="color-options">
+                      {["neutral", "amber", "blue", "green", "rose"].map(
+                        (color) => (
+                          <button
+                            key={color}
+                            className={`color-dot color-${color} ${single.data.color === color ? "chosen" : ""}`}
+                            aria-label={`${color} color`}
+                            title={color}
+                            onClick={() => {
+                              checkpoint();
+                              update(single.id, { color });
+                            }}
+                          />
+                        ),
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+              {selectedEdges.length === 1 && !selected.length && (
+                <IconButton
+                  label="Edit connection"
+                  onClick={() => editEdge(selectedEdges[0].id)}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              )}
+              <span className="toolbar-divider" />
+              <IconButton label="Delete selection" onClick={remove}>
+                <Trash2 size={15} />
               </IconButton>
-            )}
-            <span className="toolbar-divider" />
-            <IconButton label="Delete selection" onClick={remove}>
-              <Trash2 size={15} />
-            </IconButton>
-          </div>
-        )}
+            </div>
+          )}
         {searchOpen && (
           <aside className="search-panel">
             <div className="search-input">
@@ -1160,7 +1512,7 @@ export default function Canvas({
                 label="Close search"
                 onClick={() => {
                   setSearchOpen(false);
-                  setQuery('');
+                  setQuery("");
                 }}
               >
                 <X size={16} />
@@ -1168,36 +1520,47 @@ export default function Canvas({
             </div>
             <div className="search-summary">
               {query
-                ? `${matching.length} ${matching.length === 1 ? 'MATCH' : 'MATCHES'}`
-                : 'SEARCH SOURCES, NOTES, AND FILES'}
+                ? `${matching.length} ${matching.length === 1 ? "MATCH" : "MATCHES"}`
+                : "SEARCH SOURCES, NOTES, AND FILES"}
             </div>
             {matching.map((n) => (
-              <button className="search-result" key={n.id} onClick={() => jump(n)}>
+              <button
+                className="search-result"
+                key={n.id}
+                onClick={() => jump(n)}
+              >
                 <span>{n.data.kind}</span>
                 <strong>
                   {n.data.title ||
                     n.data.text?.slice(0, 100) ||
                     n.data.filename ||
                     n.data.caption ||
-                    'Untitled'}
+                    "Untitled"}
                 </strong>
                 <small>
-                  {n.data.domain || n.data.caption || n.data.description?.slice(0, 100)}
+                  {n.data.domain ||
+                    n.data.caption ||
+                    n.data.description?.slice(0, 100)}
                 </small>
               </button>
             ))}
-            {query && !matching.length && <p className="no-results">No items match “{query}”.</p>}
+            {query && !matching.length && (
+              <p className="no-results">No items match “{query}”.</p>
+            )}
           </aside>
         )}
         {currentInspector && (
           <aside className="inspector">
             <div className="inspector-heading">
               <span>EDIT {currentInspector.data.kind.toUpperCase()}</span>
-              <IconButton label="Close item editor" onClick={() => setInspector(null)}>
+              <IconButton
+                label="Close item editor"
+                onClick={() => setInspector(null)}
+              >
                 <X size={17} />
               </IconButton>
             </div>
-            {currentInspector.data.kind === 'link' ? (
+            {currentInspector.data.kind === "link" ? (
               <>
                 {!youtubeVideo(currentInspector.data.url) && (
                   <label className="checkbox-label">
@@ -1206,7 +1569,9 @@ export default function Canvas({
                       checked={!currentInspector.data.hidePreview}
                       onChange={(event) => {
                         checkpoint();
-                        update(currentInspector.id, { hidePreview: !event.target.checked });
+                        update(currentInspector.id, {
+                          hidePreview: !event.target.checked,
+                        });
                       }}
                     />
                     Show preview image
@@ -1215,7 +1580,11 @@ export default function Canvas({
                 <label>
                   Visible title
                   <InlineEditor
-                    key={currentInspector.id + '-title'}
+                    key={currentInspector.id + "-title"}
+                    binding={shared.controller?.binding(
+                      currentInspector.id,
+                      "title",
+                    )}
                     onDone={() => setInspector(null)}
                     label="Visible title"
                     multiline={false}
@@ -1225,7 +1594,10 @@ export default function Canvas({
                     onChange={(title, format) =>
                       update(currentInspector.id, {
                         title,
-                        formats: { ...currentInspector.data.formats, title: format },
+                        formats: {
+                          ...currentInspector.data.formats,
+                          title: format,
+                        },
                       })
                     }
                   />
@@ -1233,7 +1605,11 @@ export default function Canvas({
                 <label>
                   Description
                   <InlineEditor
-                    key={currentInspector.id + '-description'}
+                    key={currentInspector.id + "-description"}
+                    binding={shared.controller?.binding(
+                      currentInspector.id,
+                      "description",
+                    )}
                     onDone={() => setInspector(null)}
                     label="Description"
                     value={currentInspector.data.description}
@@ -1241,7 +1617,10 @@ export default function Canvas({
                     onChange={(description, format) =>
                       update(currentInspector.id, {
                         description,
-                        formats: { ...currentInspector.data.formats, description: format },
+                        formats: {
+                          ...currentInspector.data.formats,
+                          description: format,
+                        },
                       })
                     }
                   />
@@ -1260,22 +1639,32 @@ export default function Canvas({
                 </label>
                 <div className="capture-details">
                   <span>CAPTURED SOURCE</span>
-                  <p>{currentInspector.data.capturedTitle || 'No source metadata available'}</p>
+                  <p>
+                    {currentInspector.data.capturedTitle ||
+                      "No source metadata available"}
+                  </p>
                   <small>
                     {currentInspector.data.capturedAt
-                      ? new Date(currentInspector.data.capturedAt).toLocaleString()
-                      : ''}
+                      ? new Date(
+                          currentInspector.data.capturedAt,
+                        ).toLocaleString()
+                      : ""}
                   </small>
                   <p>
-                    {currentInspector.data.captureStatus === 'captured'
-                      ? 'Metadata preserved on this computer.'
+                    {currentInspector.data.captureStatus === "captured"
+                      ? "Metadata preserved on this computer."
                       : currentInspector.data.captureStatus}
                   </p>
                 </div>
                 <button
                   className="secondary-button"
                   disabled={currentInspector.data.loading}
-                  onClick={() => void capture(currentInspector.id, currentInspector.data.url!)}
+                  onClick={() =>
+                    void capture(
+                      currentInspector.id,
+                      currentInspector.data.url!,
+                    )
+                  }
                 >
                   <RefreshCw size={15} />
                   Refresh metadata
@@ -1285,12 +1674,19 @@ export default function Canvas({
               <>
                 <label>
                   Original filename
-                  <input readOnly value={currentInspector.data.filename || ''} />
+                  <input
+                    readOnly
+                    value={currentInspector.data.filename || ""}
+                  />
                 </label>
                 <label>
                   Notes / caption (optional)
                   <InlineEditor
-                    key={currentInspector.id + '-caption'}
+                    key={currentInspector.id + "-caption"}
+                    binding={shared.controller?.binding(
+                      currentInspector.id,
+                      "caption",
+                    )}
                     onDone={() => setInspector(null)}
                     autoFocus
                     label="Notes / caption (optional)"
@@ -1300,13 +1696,19 @@ export default function Canvas({
                     onChange={(caption, format) =>
                       update(currentInspector.id, {
                         caption,
-                        formats: { ...currentInspector.data.formats, caption: format },
+                        formats: {
+                          ...currentInspector.data.formats,
+                          caption: format,
+                        },
                       })
                     }
                   />
                 </label>
                 {currentInspector.data.assetId && (
-                  <a className="secondary-button" href={downloadUrl(currentInspector.data.assetId)}>
+                  <a
+                    className="secondary-button"
+                    href={downloadUrl(currentInspector.data.assetId)}
+                  >
                     <Download size={16} />
                     Download original
                   </a>
@@ -1325,7 +1727,7 @@ export default function Canvas({
               }}
             >
               <MapIcon size={17} />
-              {minimap ? 'Hide' : 'Show'} minimap
+              {minimap ? "Hide" : "Show"} minimap
             </button>
             <button
               onClick={() => {
@@ -1336,25 +1738,27 @@ export default function Canvas({
               <Keyboard size={17} />
               Keyboard shortcuts
             </button>
-
           </div>
         )}
         <div className="canvas-footer">
           <div className="board-stats">
             <span className="status-dot" />
-            {nodes.length} {nodes.length === 1 ? 'item' : 'items'}
+            {nodes.length} {nodes.length === 1 ? "item" : "items"}
             <span className="stat-divider">/</span>
-            {edges.length} {edges.length === 1 ? 'connection' : 'connections'}
+            {edges.length} {edges.length === 1 ? "connection" : "connections"}
           </div>
           <span className="canvas-hint">
-            {tool === 'connect'
-              ? 'Click two items to connect · or drag a connector · Esc to exit'
-              : space || tool === 'hand'
-                ? 'Drag to pan'
-                : 'Space + drag to pan · Ctrl + scroll to zoom'}
+            {tool === "connect"
+              ? "Click two items to connect · or drag a connector · Esc to exit"
+              : space || tool === "hand"
+                ? "Drag to pan"
+                : "Space + drag to pan · Ctrl + scroll to zoom"}
           </span>
           <div className="zoom-controls">
-            <IconButton label="Zoom out" onClick={() => void flow.zoomOut({ duration: 180 })}>
+            <IconButton
+              label="Zoom out"
+              onClick={() => void flow.zoomOut({ duration: 180 })}
+            >
               <Minus size={16} />
             </IconButton>
             <button
@@ -1364,7 +1768,10 @@ export default function Canvas({
             >
               {Math.round(viewport.zoom * 100)}%
             </button>
-            <IconButton label="Zoom in" onClick={() => void flow.zoomIn({ duration: 180 })}>
+            <IconButton
+              label="Zoom in"
+              onClick={() => void flow.zoomIn({ duration: 180 })}
+            >
               <Plus size={16} />
             </IconButton>
             <span className="toolbar-divider" />
@@ -1376,14 +1783,21 @@ export default function Canvas({
         {notice && (
           <div className="toast" role="status">
             {notice}
-            <button aria-label="Dismiss notification" onClick={() => setNotice('')}>
+            <button
+              aria-label="Dismiss notification"
+              onClick={() => setNotice("")}
+            >
               <X size={14} />
             </button>
           </div>
         )}
         {currentViewer && (
           <Modal
-            title={currentViewer.data.caption || currentViewer.data.filename || 'Image'}
+            title={
+              currentViewer.data.caption ||
+              currentViewer.data.filename ||
+              "Image"
+            }
             onClose={closeViewer}
           >
             <div className="image-viewer">
@@ -1393,11 +1807,18 @@ export default function Canvas({
                     ? assetUrl(currentViewer.data.assetId, false)
                     : currentViewer.data.localUrl
                 }
-                alt={currentViewer.data.caption || currentViewer.data.filename || 'Research image'}
+                alt={
+                  currentViewer.data.caption ||
+                  currentViewer.data.filename ||
+                  "Research image"
+                }
               />
             </div>
             {currentViewer.data.assetId && (
-              <a className="secondary-button" href={downloadUrl(currentViewer.data.assetId)}>
+              <a
+                className="secondary-button"
+                href={downloadUrl(currentViewer.data.assetId)}
+              >
                 <Download size={16} />
                 Download original
               </a>
@@ -1410,18 +1831,27 @@ export default function Canvas({
               Relationship label
               <InlineEditor
                 key={currentEdge.id}
+                binding={shared.controller?.binding(
+                  currentEdge.id,
+                  "label",
+                  true,
+                )}
                 autoFocus
                 label="Relationship label"
                 multiline={false}
                 placeholder="e.g. supports, contradicts, source for…"
                 maxLength={1000}
-                value={String(currentEdge.label || '')}
+                value={String(currentEdge.label || "")}
                 format={currentEdge.data?.labelFormat}
                 onChange={(label, labelFormat) =>
                   setEdges((es) =>
                     es.map((edge) =>
                       edge.id === currentEdge.id
-                        ? { ...edge, label, data: { ...edge.data, labelFormat } }
+                        ? {
+                            ...edge,
+                            label,
+                            data: { ...edge.data, labelFormat },
+                          }
                         : edge,
                     ),
                   )
@@ -1437,7 +1867,10 @@ export default function Canvas({
                   setEdges((es) =>
                     es.map((edge) =>
                       edge.id === currentEdge.id
-                        ? { ...edge, data: { ...edge.data, directed: e.target.checked } }
+                        ? {
+                            ...edge,
+                            data: { ...edge.data, directed: e.target.checked },
+                          }
                         : edge,
                     ),
                   )
@@ -1446,7 +1879,10 @@ export default function Canvas({
               Show direction arrow
             </label>
             <div className="dialog-actions">
-              <button className="primary-button" onClick={() => setEdgeEdit(null)}>
+              <button
+                className="primary-button"
+                onClick={() => setEdgeEdit(null)}
+              >
                 Done
               </button>
             </div>
@@ -1456,21 +1892,21 @@ export default function Canvas({
           <Modal title="Keep your train of thought." onClose={closeHelp}>
             <div className="shortcut-list">
               {[
-                ['New note', 'N / double-click canvas'],
-                ['Add a source', 'L / paste URL'],
-                ['Upload an image', 'Paste / drop a file'],
-                ['Select / pan', 'V / H'],
-                ['Pan temporarily', 'Space + drag'],
-                ['Zoom at pointer', 'Ctrl + scroll / pinch'],
-                ['Connect / region', 'C / R'],
-                ['Select multiple', 'Shift + click / drag'],
-                ['Copy / paste', 'Ctrl or ⌘ + C / V'],
-                ['Duplicate', 'Ctrl or ⌘ + D'],
-                ['Undo / redo', 'Ctrl or ⌘ + Z / Shift + Z'],
-                ['Group / ungroup', 'Ctrl or ⌘ + G / Shift + G'],
-                ['Search board', 'Ctrl or ⌘ + F'],
-                ['Fit everything', 'F'],
-                ['Delete / deselect', 'Delete / Escape'],
+                ["New note", "N / double-click canvas"],
+                ["Add a source", "L / paste URL"],
+                ["Upload an image", "Paste / drop a file"],
+                ["Select / pan", "V / H"],
+                ["Pan temporarily", "Space + drag"],
+                ["Zoom at pointer", "Ctrl + scroll / pinch"],
+                ["Connect / region", "C / R"],
+                ["Select multiple", "Shift + click / drag"],
+                ["Copy / paste", "Ctrl or ⌘ + C / V"],
+                ["Duplicate", "Ctrl or ⌘ + D"],
+                ["Undo / redo", "Ctrl or ⌘ + Z / Shift + Z"],
+                ["Group / ungroup", "Ctrl or ⌘ + G / Shift + G"],
+                ["Search board", "Ctrl or ⌘ + F"],
+                ["Fit everything", "F"],
+                ["Delete / deselect", "Delete / Escape"],
               ].map(([name, key]) => (
                 <div key={name}>
                   <span>{name}</span>

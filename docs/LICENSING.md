@@ -13,3 +13,7 @@ You may modify these libraries and debug those modifications under their respect
 When upgrading Sharp, regenerate the source manifest, obtain the new exact sources and build recipes, review changes to notices, and update checksums before releasing binaries. The source companion is a separate developer resource; ordinary users do not need it to run IntelBoard.
 
 Generated notices are reproducible convenience output, not a grant of rights to unrelated user-imported material. Users remain responsible for the documents/media they import and share.
+
+## Collaboration networking
+
+Yjs, lib0 and fast-diff are included in the generated npm notices. The Go helper pins Tailcat and transitive module versions in `native/network/go.mod` and `go.sum`. `npm run notices:network` enumerates modules actually linked for either supported platform, writes their complete available license/notice texts to `licenses/NETWORK_NOTICES.txt`, and records versions/checksums in `licenses/network-modules.json`. The Go standard-library license is included. These files ship in the application; native source and dependency pins are in the source repository. Handoff was a public architectural reference; no Handoff application source was copied into the helper.

@@ -1,32 +1,40 @@
 {
   "name": "intelboard-desktop",
-  "version": "1.0.4",
+  "version": "1.1.0-dev.1",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "electron .",
     "build": "tsc -b && vite build && node scripts/notices.js",
     "test": "node --test tests/*.test.js",
-    "package:linux": "npm run build && electron-builder --linux AppImage --x64 --publish never",
-    "package:win": "node scripts/require-windows.js && npm run build && electron-builder --win nsis --x64 --publish never",
-    "package:dir": "npm run build && electron-builder --dir --publish never",
+    "package:linux": "npm run build:network && npm run notices:network && npm run build && electron-builder --linux AppImage --x64 --publish never",
+    "package:win": "node scripts/require-windows.js && npm run build:network && npm run notices:network && npm run build && electron-builder --win nsis --x64 --publish never",
+    "package:dir": "npm run build:network && npm run notices:network && npm run build && electron-builder --dir --publish never",
     "audit:release": "node scripts/audit-release.js",
     "notices": "node scripts/notices.js",
-    "test:desktop": "node scripts/smoke-desktop.js"
+    "test:desktop": "node scripts/smoke-desktop.js",
+    "build:network": "node scripts/build-network.js",
+    "notices:network": "node scripts/network-notices.js",
+    "test:collaboration": "node tests/collaboration.test.js && node tests/collaboration-media.test.js && node tests/collaboration-persistence.test.js",
+    "test:collaboration-ui": "node scripts/smoke-collaboration.js",
+    "test:collaboration-network": "node scripts/test-network.js"
   },
   "dependencies": {
     "@xyflow/react": "^12.9.0",
     "cheerio": "^1.1.2",
     "dompurify": "^3.4.15",
     "epubjs": "^0.3.93",
+    "fast-diff": "1.3.0",
     "ipaddr.js": "^2.2.0",
     "jszip": "^3.10.1",
+    "lib0": "0.2.120",
     "lucide-react": "^0.468.0",
     "pdfjs-dist": "^6.3.289",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "sharp": "^0.35.4",
     "yauzl": "^3.4.0",
+    "yjs": "13.6.33",
     "zod": "^4.1.0"
   },
   "devDependencies": {
@@ -80,13 +88,31 @@
       "category": "Office",
       "icon": "build/icon.png",
       "executableName": "intelboard",
-      "syncDesktopName": true
+      "syncDesktopName": true,
+      "extraResources": [
+        {
+          "from": "native/bin",
+          "to": "native/bin",
+          "filter": [
+            "intelboard-network"
+          ]
+        }
+      ]
     },
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "extraResources": [
+        {
+          "from": "native/bin",
+          "to": "native/bin",
+          "filter": [
+            "intelboard-network.exe"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

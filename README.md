@@ -9,6 +9,10 @@ A private visual workspace for sources, thoughts, media, and the connections bet
 - Board search, themes, minimap, clipboard operations, undo and redo.
 - Local autosave, recovery drafts, native file dialogs and complete portable board/workspace exports.
 
+## Collaboration development preview
+
+Development preview **1.1.0-dev.1** adds invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Private boards remain private until explicitly shared. Download the collaboration preview from [its prerelease page](https://github.com/ino40k/intelboard-desktop/releases/tag/v1.1.0-dev.1). The stable 1.0.4 edition does not include collaboration. See [collaboration architecture and usage](docs/COLLABORATION.md) and [validation](docs/COLLABORATION_VALIDATION.md).
+
 ## Install
 
 Download the latest stable release for **Windows 11 x64** or **Fedora Linux x64** from [GitHub Releases](https://github.com/ino40k/intelboard-desktop/releases/latest). Windows installers are currently unsigned.
@@ -37,11 +41,13 @@ Deleting a board retains uploaded files, matching the original's recoverability 
 
 ## Build from source
 
-Use Node.js **24 LTS**, npm, and the standard build tools for your platform. These are developer requirements only.
+Use Node.js **24 LTS**, npm, Go **1.27.1** (see `native/network/go.mod`), and the standard build tools for your platform. These are developer requirements only.
 
 ```sh
 npm ci
 npx install-electron --no
+npm run build:network
+npm run notices:network
 npm test
 npm run build
 npm start
@@ -66,6 +72,6 @@ Follow [RELEASING.md](docs/RELEASING.md) for versioning, repository setup and pu
 
 ## Architecture and license
 
-Electron bundles Chromium and Node. The original React/React Flow interface and pure application modules are retained; a narrow, validated IPC bridge replaces the Express server. No TCP listener or HTTP backend is started. See [architecture and parity](docs/ARCHITECTURE.md).
+Electron bundles Chromium and Node. The original React/React Flow interface and pure application modules are retained; a narrow, validated IPC bridge replaces the Express server. Private-only use starts no peer transport. Explicit sharing starts an app-lifetime Go/Tailcat helper for encrypted peer connections; no HTTP backend or separately installed service is required. See [architecture and parity](docs/ARCHITECTURE.md).
 
 MIT, selected by the original code owner. Dependency licenses are retained in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and in the packaged dependencies; Electron/Chromium includes its own notices. See [licensing](docs/LICENSING.md).

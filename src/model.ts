@@ -1,12 +1,14 @@
-import { documentFormat } from '../shared/document.js';
-import type { FormatRange } from '../shared/format.js';
-import type { Node, Edge, Viewport } from '@xyflow/react';
-import { videoMime, youtubeVideo } from '../shared/media.js';
-import { uuid } from '../shared/uuid.js';
-export type Kind = 'note' | 'link' | 'image' | 'file' | 'region';
+import { documentFormat } from "../shared/document.js";
+import type { FormatRange } from "../shared/format.js";
+import type { Node, Edge, Viewport } from "@xyflow/react";
+import { videoMime, youtubeVideo } from "../shared/media.js";
+import { uuid } from "../shared/uuid.js";
+export type Kind = "note" | "link" | "image" | "file" | "region";
 export type ItemData = {
   kind: Kind;
-  formats?: Partial<Record<'text' | 'title' | 'description' | 'caption', FormatRange[]>>;
+  formats?: Partial<
+    Record<"text" | "title" | "description" | "caption", FormatRange[]>
+  >;
   text?: string;
   title?: string;
   url?: string;
@@ -38,9 +40,14 @@ export type ItemData = {
   localUrl?: string;
   uploadError?: string;
 };
-export type Item = Node<ItemData, 'research'>;
-export type Connection = Edge<{ directed?: boolean; labelFormat?: FormatRange[] }, 'research'>;
+export type Item = Node<ItemData, "research">;
+export type Connection = Edge<
+  { directed?: boolean; labelFormat?: FormatRange[] },
+  "research"
+>;
 export type Board = {
+  shared?: boolean;
+  documentId?: string;
   id: string;
   title: string;
   created_at: string;
@@ -61,9 +68,9 @@ export type Asset = {
   height?: number;
   preview?: string;
 };
-export { uuid } from '../shared/uuid.js';
+export { uuid } from "../shared/uuid.js";
 export const assetUrl = (id: string, preview = true) =>
-  `/api/assets/${id}?${preview ? 'preview=1' : 'inline=1'}`;
+  `/api/assets/${id}?${preview ? "preview=1" : "inline=1"}`;
 export const downloadUrl = (id: string) => `/api/assets/${id}`;
 export const readableSize = (size = 0) =>
   size < 1024
@@ -84,71 +91,96 @@ export function makeItem(
     region: [720, 480],
   };
   const isVideo =
-    (kind === 'file' && videoMime(data.filename, data.mime)) ||
-    (kind === 'link' && youtubeVideo(data.url));
+    (kind === "file" && videoMime(data.filename, data.mime)) ||
+    (kind === "link" && youtubeVideo(data.url));
   const [width, height] = isVideo
     ? [420, 300]
-    : kind === 'file' && documentFormat(data.filename, data.mime)
+    : kind === "file" && documentFormat(data.filename, data.mime)
       ? [480, 560]
       : sizes[kind];
   return {
     id: uuid(),
-    type: 'research',
+    type: "research",
     position,
     style: { width, height },
-    zIndex: kind === 'region' ? -100 : 1,
+    zIndex: kind === "region" ? -100 : 1,
     data: {
       kind,
-      color: kind === 'note' ? 'amber' : 'neutral',
+      color: kind === "note" ? "amber" : "neutral",
       createdAt: new Date().toISOString(),
       ...data,
     },
   };
 }
 export function cleanNodes(nodes: Item[]): Item[] {
-  return nodes.map(({ id, type, position, data, style, width, height, zIndex }) => {
-    const { loading, localUrl, uploadError, ...saved } = data;
-    return {
-      id,
-      type,
-      position,
-      data: Object.fromEntries(
-        Object.entries(saved).filter(([, value]) => value != null),
-      ) as unknown as ItemData,
-      style,
-      width,
-      height,
-      zIndex,
-    };
-  });
+  return nodes.map(
+    ({ id, type, position, data, style, width, height, zIndex }) => {
+      const { loading, localUrl, uploadError, ...saved } = data;
+      return {
+        id,
+        type,
+        position,
+        data: Object.fromEntries(
+          Object.entries(saved).filter(([, value]) => value != null),
+        ) as unknown as ItemData,
+        style,
+        width,
+        height,
+        zIndex,
+      };
+    },
+  );
 }
 export function cleanEdges(edges: Connection[]): Connection[] {
-  return edges.map(({ id, source, target, sourceHandle, targetHandle, type, label, data }) => ({
-    id,
-    source,
-    target,
-    sourceHandle,
-    targetHandle,
-    type,
-    label,
-    data,
-  }));
+  return edges.map(
+    ({
+      id,
+      source,
+      target,
+      sourceHandle,
+      targetHandle,
+      type,
+      label,
+      data,
+    }) => ({
+      id,
+      source,
+      target,
+      sourceHandle,
+      targetHandle,
+      type,
+      label,
+      data,
+    }),
+  );
 }
 export const searchable = (n: Item) =>
   Object.entries(n.data)
     .filter(
       ([k, v]) =>
-        !['assetId', 'thumbnailId', 'faviconId', 'localUrl', 'groupId'].includes(k) &&
-        typeof v === 'string',
+        ![
+          "assetId",
+          "thumbnailId",
+          "faviconId",
+          "localUrl",
+          "groupId",
+        ].includes(k) && typeof v === "string",
     )
     .map(([, v]) => v)
-    .join(' ')
+    .join(" ")
     .toLowerCase();
-export function duplicateItems(nodes: Item[], edges: Connection[], offset = 32) {
+export function duplicateItems(
+  nodes: Item[],
+  edges: Connection[],
+  offset = 32,
+  makeId = uuid,
+) {
   const selected = nodes.filter((n) => n.selected);
-  const ids = new Map(selected.map((n) => [n.id, uuid()]));
+  const ids = new Map(selected.map((n) => [n.id, makeId()]));
   const groups = new Map(
-    selected.filter((n) => n.data.groupId).map((n) => [n.data.groupId!, uuid()]),
+    selected
+      .filter((n) => n.data.groupId)
+      .map((n) => [n.data.groupId!, makeId()]),
   );
   return {
     nodes: selected.map((n) => ({
@@ -156,10 +188,18 @@ export function duplicateItems(nodes: Item[], edges: Connection[], offset = 32) 
       id: ids.get(n.id)!,
       position: { x: n.position.x + offset, y: n.position.y + offset },
       selected: true,
-      data: { ...n.data, groupId: n.data.groupId ? groups.get(n.data.groupId) : undefined },
+      data: {
+        ...n.data,
+        groupId: n.data.groupId ? groups.get(n.data.groupId) : undefined,
+      },
     })),
     edges: edges
       .filter((e) => ids.has(e.source) && ids.has(e.target))
-      .map((e) => ({ ...e, id: uuid(), source: ids.get(e.source)!, target: ids.get(e.target)! })),
+      .map((e) => ({
+        ...e,
+        id: makeId(),
+        source: ids.get(e.source)!,
+        target: ids.get(e.target)!,
+      })),
   };
 }

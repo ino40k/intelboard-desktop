@@ -4,16 +4,29 @@ import {
   useRef,
   useState,
   type ClipboardEvent as ReactClipboardEvent,
-} from 'react';
-import { Bold, Italic, Underline } from 'lucide-react';
-import { formatRuns, toggleFormat, replaceText, type FormatRange } from '../shared/format.js';
-export type { FormatRange } from '../shared/format.js';
+} from "react";
+import { Bold, Italic, Underline } from "lucide-react";
+import {
+  formatRuns,
+  toggleFormat,
+  replaceText,
+  type FormatRange,
+} from "../shared/format.js";
+import type { TextBinding } from "./collaboration/controller";
+import * as Y from "yjs";
+export type { FormatRange } from "../shared/format.js";
 const styleFor = (mask: number) => ({
   fontWeight: mask & 1 ? 700 : undefined,
-  fontStyle: mask & 2 ? 'italic' : undefined,
-  textDecoration: mask & 4 ? 'underline' : undefined,
+  fontStyle: mask & 2 ? "italic" : undefined,
+  textDecoration: mask & 4 ? "underline" : undefined,
 });
-export function InlineText({ text = '', format = [] }: { text?: string; format?: FormatRange[] }) {
+export function InlineText({
+  text = "",
+  format = [],
+}: {
+  text?: string;
+  format?: FormatRange[];
+}) {
   return (
     <>
       {formatRuns(text, format).map((r) => (
@@ -31,7 +44,11 @@ function selectionIn(root: HTMLElement): Selection | null {
   const selection = window.getSelection();
   if (!selection?.rangeCount) return null;
   const range = selection.getRangeAt(0);
-  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  if (
+    !root.contains(range.startContainer) ||
+    !root.contains(range.endContainer)
+  )
+    return null;
   const prefix = range.cloneRange();
   prefix.selectNodeContents(root);
   prefix.setEnd(range.startContainer, range.startOffset);
@@ -46,7 +63,7 @@ function restoreSelection(root: HTMLElement, selection: Selection) {
   let current: Node | null;
   while ((current = walker.nextNode())) texts.push(current as Text);
   if (!texts.length) {
-    root.append(document.createTextNode(''));
+    root.append(document.createTextNode(""));
     texts.push(root.firstChild as Text);
   }
   const locate = (offset: number): [Node, number] => {
@@ -66,7 +83,7 @@ function restoreSelection(root: HTMLElement, selection: Selection) {
 function paint(root: HTMLElement, value: Value) {
   const fragment = document.createDocumentFragment();
   for (const run of formatRuns(value.text, value.format)) {
-    const span = document.createElement('span');
+    const span = document.createElement("span");
     span.dataset.inlineStyle = String(run.style);
     Object.assign(span.style, styleFor(run.style));
     span.textContent = value.text.slice(run.start, run.end);
@@ -74,26 +91,26 @@ function paint(root: HTMLElement, value: Value) {
   }
   // A terminal newline needs a trailing line box for Chromium's caret.
   // It is presentation only; read() excludes this sentinel from saved text.
-  if (value.text.endsWith('\n')) fragment.append(document.createElement('br'));
+  if (value.text.endsWith("\n")) fragment.append(document.createElement("br"));
   root.replaceChildren(fragment);
 }
 function read(root: HTMLElement): Value {
-  let text = '';
+  let text = "";
   const format: FormatRange[] = [];
   const visit = (node: Node, inherited: number) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const start = text.length;
-      text += node.textContent || '';
+      text += node.textContent || "";
       if (inherited && text.length > start)
         format.push({ start, end: text.length, style: inherited });
     } else if (node instanceof HTMLElement) {
       const style = Number(node.dataset.inlineStyle ?? inherited) & 7;
-      if (node.tagName === 'BR') {
-        if (node !== root.lastChild) text += '\n';
+      if (node.tagName === "BR") {
+        if (node !== root.lastChild) text += "\n";
         return;
       }
-      const block = node !== root && ['DIV', 'P'].includes(node.tagName);
-      if (block && text && !text.endsWith('\n')) text += '\n';
+      const block = node !== root && ["DIV", "P"].includes(node.tagName);
+      if (block && text && !text.endsWith("\n")) text += "\n";
       node.childNodes.forEach((child) => visit(child, style));
     }
   };
@@ -102,17 +119,18 @@ function read(root: HTMLElement): Value {
 }
 /** A deliberately small plain-text editor with inline marks, not stored HTML. */
 export function InlineEditor({
-  value = '',
+  value = "",
   format = [],
   onChange,
   label,
-  placeholder = '',
+  placeholder = "",
   maxLength = 10000,
   autoFocus = false,
   multiline = true,
-  className = '',
+  className = "",
   onDone,
   onBlur,
+  binding,
 }: {
   value?: string;
   format?: FormatRange[];
@@ -125,6 +143,7 @@ export function InlineEditor({
   className?: string;
   onDone?: () => void;
   onBlur?: () => void;
+  binding?: TextBinding;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const current = useRef<Value>({ text: value, format });
@@ -140,20 +159,27 @@ export function InlineEditor({
     if (!s) return;
     remembered.current = s;
     setSelected(s);
-    const covered = formatRuns(current.current.text, current.current.format).filter(
-      (r) => r.start < s.end && r.end > s.start,
+    const covered = formatRuns(
+      current.current.text,
+      current.current.format,
+    ).filter((r) => r.start < s.end && r.end > s.start);
+    setActive(
+      covered.length ? covered.reduce((mask, r) => mask & r.style, 7) : 0,
     );
-    setActive(covered.length ? covered.reduce((mask, r) => mask & r.style, 7) : 0);
   };
   // A missing/default format array is a new object on every local selection
   // render. Sync only when prop content changes, so a render with the parent's
   // previous text cannot overwrite a keystroke before its update arrives.
   const formatKey = JSON.stringify(format);
   useLayoutEffect(() => {
+    if (binding) return;
     const element = root.current!;
-    const incoming = { text: value, format: formatRuns(value, format).filter((r) => r.style) };
+    const incoming = {
+      text: value,
+      format: formatRuns(value, format).filter((r) => r.style),
+    };
     if (
-      !element.hasAttribute('data-initialized') ||
+      !element.hasAttribute("data-initialized") ||
       JSON.stringify(incoming) !== JSON.stringify(current.current)
     ) {
       const s = selectionIn(element);
@@ -162,17 +188,66 @@ export function InlineEditor({
       past.current = [];
       future.current = [];
       if (s) restoreSelection(element, s);
-      element.dataset.initialized = 'true';
+      element.dataset.initialized = "true";
     }
-  }, [value, formatKey]);
+  }, [value, formatKey, binding]);
+  useLayoutEffect(() => {
+    if (!binding) return;
+    const element = root.current!;
+    let relative: {
+      start: Y.RelativePosition;
+      end: Y.RelativePosition;
+    } | null = null;
+    const before = (transaction: Y.Transaction) => {
+      if (transaction.origin === binding.origin || composing.current) return;
+      const s = selectionIn(element);
+      if (!s) return;
+      relative = {
+        start: Y.createRelativePositionFromTypeIndex(binding.text, s.start),
+        end: Y.createRelativePositionFromTypeIndex(binding.text, s.end),
+      };
+    };
+    const update = (event?: Y.YTextEvent) => {
+      if (composing.current || event?.transaction.origin === binding.origin)
+        return;
+      current.current = binding.read();
+      paint(element, current.current);
+      if (relative) {
+        const start = Y.createAbsolutePositionFromRelativePosition(
+            relative.start,
+            binding.doc,
+          ),
+          end = Y.createAbsolutePositionFromRelativePosition(
+            relative.end,
+            binding.doc,
+          );
+        if (start && end)
+          restoreSelection(element, { start: start.index, end: end.index });
+        relative = null;
+      }
+      element.dataset.initialized = "true";
+      refresh();
+    };
+    update();
+    binding.doc.on("beforeTransaction", before);
+    binding.text.observe(update);
+    return () => {
+      binding.doc.off("beforeTransaction", before);
+      binding.text.unobserve(update);
+      if (composing.current) binding.compose(false);
+    };
+  }, [binding]);
   useEffect(() => {
-    document.addEventListener('selectionchange', refresh);
+    document.addEventListener("selectionchange", refresh);
     let frame = 0,
       attempts = 0;
     const focus = () => {
       const element = root.current;
       if (!element) return;
-      if (getComputedStyle(element).visibility === 'hidden' && attempts++ < 20) {
+      if (
+        getComputedStyle(element).visibility === "hidden" &&
+        attempts++ < 20
+      ) {
         frame = requestAnimationFrame(focus);
         return;
       }
@@ -189,7 +264,7 @@ export function InlineEditor({
     };
     if (autoFocus) frame = requestAnimationFrame(focus);
     return () => {
-      document.removeEventListener('selectionchange', refresh);
+      document.removeEventListener("selectionchange", refresh);
       cancelAnimationFrame(frame);
     };
   }, []);
@@ -198,11 +273,14 @@ export function InlineEditor({
     next.text = next.text.slice(0, maxLength);
     next.format = formatRuns(next.text, next.format).filter((r) => r.style);
     if (JSON.stringify(next) !== JSON.stringify(current.current)) {
-      past.current.push({ ...current.current, selection: before });
-      if (past.current.length > 100) past.current.shift();
-      future.current = [];
+      if (!binding) {
+        past.current.push({ ...current.current, selection: before });
+        if (past.current.length > 100) past.current.shift();
+        future.current = [];
+      }
       current.current = next;
-      onChange(next.text, next.format);
+      if (binding) binding.apply(next);
+      else onChange(next.text, next.format);
     }
     paint(element, next);
     restoreSelection(element, s);
@@ -212,7 +290,13 @@ export function InlineEditor({
     if (composing.current) return;
     const element = root.current!;
     const next = read(element);
-    commit(next, selectionIn(element) || { start: next.text.length, end: next.text.length });
+    commit(
+      next,
+      selectionIn(element) || {
+        start: next.text.length,
+        end: next.text.length,
+      },
+    );
   };
   const apply = (bit: number) => {
     const element = root.current!,
@@ -222,12 +306,22 @@ export function InlineEditor({
     commit(
       {
         text: current.current.text,
-        format: toggleFormat(current.current.text, current.current.format, s.start, s.end, bit),
+        format: toggleFormat(
+          current.current.text,
+          current.current.format,
+          s.start,
+          s.end,
+          bit,
+        ),
       },
       s,
     );
   };
   const history = (redo: boolean) => {
+    if (binding) {
+      binding.undo(redo);
+      return;
+    }
     const from = redo ? future : past,
       to = redo ? past : future;
     const snapshot = from.current.pop();
@@ -245,8 +339,14 @@ export function InlineEditor({
   const insert = (text: string, insertedFormat?: FormatRange[]) => {
     const element = root.current!,
       s = selectionIn(element) || remembered.current;
-    const available = Math.max(0, maxLength - current.current.text.length + s.end - s.start);
-    text = (multiline ? text : text.replace(/[\r\n]+/g, ' ')).slice(0, available);
+    const available = Math.max(
+      0,
+      maxLength - current.current.text.length + s.end - s.start,
+    );
+    text = (multiline ? text : text.replace(/[\r\n]+/g, " ")).slice(
+      0,
+      available,
+    );
     element.focus();
     commit(
       replaceText(
@@ -261,7 +361,10 @@ export function InlineEditor({
       s,
     );
   };
-  const copySelection = (e: ReactClipboardEvent<HTMLDivElement>, cut = false) => {
+  const copySelection = (
+    e: ReactClipboardEvent<HTMLDivElement>,
+    cut = false,
+  ) => {
     const s = selectionIn(root.current!);
     if (!s || s.start === s.end) return;
     e.preventDefault();
@@ -274,15 +377,21 @@ export function InlineEditor({
         end: Math.min(r.end, s.end) - s.start,
         style: r.style,
       }));
-    e.clipboardData.setData('text/plain', text);
+    e.clipboardData.setData("text/plain", text);
     e.clipboardData.setData(
-      'application/x-intelboard-inline+json',
+      "application/x-intelboard-inline+json",
       JSON.stringify({ text, format }),
     );
 
     if (cut)
       commit(
-        replaceText(current.current.text, current.current.format, s.start, s.end, ''),
+        replaceText(
+          current.current.text,
+          current.current.format,
+          s.start,
+          s.end,
+          "",
+        ),
         { start: s.start, end: s.start },
         s,
       );
@@ -296,12 +405,16 @@ export function InlineEditor({
         if (!e.currentTarget.contains(e.relatedTarget as Node)) onBlur?.();
       }}
     >
-      <div className="inline-format-bar" role="toolbar" aria-label={`Format ${label}`}>
+      <div
+        className="inline-format-bar"
+        role="toolbar"
+        aria-label={`Format ${label}`}
+      >
         {(
           [
-            [1, 'Bold', 'B', Bold],
-            [2, 'Italic', 'I', Italic],
-            [4, 'Underline', 'U', Underline],
+            [1, "Bold", "B", Bold],
+            [2, "Italic", "I", Italic],
+            [4, "Underline", "U", Underline],
           ] as const
         ).map(([bit, name, key, Icon]) => (
           <button
@@ -333,33 +446,35 @@ export function InlineEditor({
         onInput={input}
         onBeforeInput={(e) => {
           const type = (e.nativeEvent as InputEvent).inputType;
-          if (type === 'insertParagraph' || type === 'insertLineBreak') {
+          if (type === "insertParagraph" || type === "insertLineBreak") {
             e.preventDefault();
-            if (multiline) insert('\n');
+            if (multiline) insert("\n");
             else onDone?.();
           }
-          if (type === 'historyUndo' || type === 'historyRedo') {
+          if (type === "historyUndo" || type === "historyRedo") {
             e.preventDefault();
-            history(type === 'historyRedo');
+            history(type === "historyRedo");
           }
         }}
         onCompositionStart={() => {
           composing.current = true;
+          binding?.compose(true);
         }}
         onCompositionEnd={() => {
           composing.current = false;
           input();
+          binding?.compose(false);
         }}
         onCopy={(e) => copySelection(e)}
         onCut={(e) => copySelection(e, true)}
         onPaste={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          const text = e.clipboardData.getData('text/plain');
+          const text = e.clipboardData.getData("text/plain");
           let format: FormatRange[] | undefined;
           try {
             const rich = JSON.parse(
-              e.clipboardData.getData('application/x-intelboard-inline+json'),
+              e.clipboardData.getData("application/x-intelboard-inline+json"),
             );
             if (
               rich.text === text &&
@@ -392,17 +507,17 @@ export function InlineEditor({
           if (e.nativeEvent.isComposing) return;
           const key = e.key.toLowerCase(),
             command = e.ctrlKey || e.metaKey;
-          if (command && ['b', 'i', 'u'].includes(key)) {
+          if (command && ["b", "i", "u"].includes(key)) {
             e.preventDefault();
-            apply(key === 'b' ? 1 : key === 'i' ? 2 : 4);
-          } else if (command && (key === 'z' || key === 'y')) {
+            apply(key === "b" ? 1 : key === "i" ? 2 : 4);
+          } else if (command && (key === "z" || key === "y")) {
             e.preventDefault();
-            history(key === 'y' || e.shiftKey);
-          } else if (key === 'enter') {
+            history(key === "y" || e.shiftKey);
+          } else if (key === "enter") {
             e.preventDefault();
-            if (multiline) insert('\n');
+            if (multiline) insert("\n");
             else onDone?.();
-          } else if (key === 'escape') {
+          } else if (key === "escape") {
             e.preventDefault();
             onDone?.();
           }

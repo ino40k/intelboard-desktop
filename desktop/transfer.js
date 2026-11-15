@@ -18,6 +18,7 @@ const manifestSchema = z.object({
 });
 const refs = boards => new Set(boards.flatMap(b => b.nodes.flatMap(n => [n.data.assetId,n.data.thumbnailId,n.data.faviconId].filter(Boolean))));
 export async function exportBoards(service, ids, destination) {
+  if (ids.some(id => service.collaboration?.canExport(id) === false)) throw new Error('Some shared content or attachments are still arriving. Retry export after synchronization finishes.');
   const boards = ids.map(id => {
     const board = service.store.get(id); if (!board) throw new Error('Board not found'); return boardSchema.parse(board);
   });

@@ -10,7 +10,7 @@ Express supplied board CRUD/duplication, revision-controlled saves, uploads, dow
 
 ## Desktop choices
 
-Electron preserves Chromium rendering behavior and directly runs the existing JavaScript/Node SQLite/Sharp modules. This avoids introducing a Rust backend and rewriting otherwise compatible functionality. The production frontend is loaded from a secure, standard `intelboard:` protocol, not a development server. No Express dependency or listening network socket remains.
+Electron preserves Chromium rendering behavior and directly runs the existing JavaScript/Node SQLite/Sharp modules. This avoids introducing a Rust backend and rewriting otherwise compatible functionality. The production frontend is loaded from a secure, standard `intelboard:` protocol, not a development server. No Express dependency or HTTP server remains. Private-only profiles do not start peer networking. Explicitly shared boards add an app-lifetime Tailcat helper; see [collaboration architecture](COLLABORATION.md).
 
 - `src/`: existing canvas, card/editor/reader components, styles and themes; desktop API adapter.
 - `shared/`: original schemas and media, document, formatting and UUID helpers.
@@ -59,3 +59,7 @@ Renderer Node integration is disabled, context isolation and Chromium sandbox ar
 ## Known practical differences
 
 No password prompt or multi-user server access; local data relies on operating-system permissions and is not encrypted. Sharing is portable file transfer. Source sites and YouTube can impose network/provider limitations. Media codec support depends on Chromium/platform; unsupported originals remain downloadable. Native OS dialogs/menu and desktop transfer controls supplement the original styling. Window width has an 800 px minimum. Future upgrades require explicit, additive schema migrations; no automatic update service exists.
+
+## Collaboration preview
+
+The private board contracts above are preserved. Schema 2 adds a signed per-board Yjs journal, membership, invitations, recovery and resumable-media metadata. Shared projections update only changed rows; raw SQLite is never synchronized. The new source is under `shared/collaboration`, `desktop/collaboration`, `src/collaboration` and `native/network`. [COLLABORATION.md](COLLABORATION.md) documents the protocol, limits, security boundaries and build requirements.
