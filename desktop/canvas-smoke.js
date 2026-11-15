@@ -343,6 +343,11 @@ export async function runSmoke(window, service, dir) {
           x: outside.x + ((to.x - outside.x) * i) / 4,
           y: to.y,
         });
+      // XYHandle completes from its last processed move, not mouse-up coordinates.
+      // Native Chromium input can coalesce that final move on a busy runner.
+      await wait(
+        `!!document.querySelector('[data-nodeid="${b.id}"].react-flow__handle.connectingto.valid')`,
+      );
       await mouse("mouseUp", to);
       await wait(`document.querySelectorAll('.react-flow__edge').length===1`);
       const pathBefore = await js(
