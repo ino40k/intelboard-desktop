@@ -225,4 +225,4 @@ build and bundle the helper automatically. `INTELBOARD_GO` may point to an isola
 Go executable. Native Linux builds produce `release/*.AppImage`; Windows produces
 the standard per-user NSIS installer. `node scripts/build-network.js windows` can
 cross-compile the networking helper on Linux; this does not build or validate the
-Windows installer. The current preview is `1.1.0-dev.4`. Download the matching Windows and Linux builds from its GitHub prerelease page.
+Windows installer. The current preview is `1.1.0-dev.5`. Download the matching Windows and Linux builds from its GitHub prerelease page.

@@ -11,7 +11,7 @@ A private visual workspace for sources, thoughts, media, and the connections bet
 
 ## Collaboration development preview
 
-Development preview **1.1.0-dev.4** adds invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Private boards remain private until explicitly shared. Download the collaboration preview from [its prerelease page](https://github.com/ino40k/intelboard-desktop/releases/tag/v1.1.0-dev.4). This update also adds right-button navigation, zoom-aware handles and magnetic alignment; see [canvas interactions](docs/CANVAS_INTERACTIONS.md). The stable 1.0.4 edition does not include these changes. See [collaboration architecture and usage](docs/COLLABORATION.md) and [validation](docs/COLLABORATION_VALIDATION.md).
+Development preview **1.1.0-dev.5** adds invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Private boards remain private until explicitly shared. Download the collaboration preview from [its prerelease page](https://github.com/ino40k/intelboard-desktop/releases/tag/v1.1.0-dev.5). This update also adds right-button navigation, zoom-aware handles and magnetic alignment; see [canvas interactions](docs/CANVAS_INTERACTIONS.md). The stable 1.0.4 edition does not include these changes. See [collaboration architecture and usage](docs/COLLABORATION.md) and [validation](docs/COLLABORATION_VALIDATION.md).
 
 ## Install
 
