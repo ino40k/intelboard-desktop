@@ -22,6 +22,7 @@ import {
   BackgroundVariant,
   MiniMap,
   useReactFlow,
+  useUpdateNodeInternals,
   applyNodeChanges,
   applyEdgeChanges,
   SelectionMode,
@@ -115,6 +116,15 @@ export default function Canvas({
   onShared: () => Promise<void>;
 }) {
   const shared = useSharedBoard(board);
+  const updateNodeInternals = useUpdateNodeInternals();
+  useEffect(() => {
+    // The live shared snapshot replaces the loading snapshot. Refresh anchors
+    // once after that handoff, including when recovery replaces the controller.
+    if (shared.controller)
+      updateNodeInternals(
+        shared.controller.getSnapshot().nodes.map((n) => n.id),
+      );
+  }, [shared.controller, updateNodeInternals]);
   const uuid = useCallback(
     () =>
       board.shared
@@ -1131,8 +1141,8 @@ export default function Canvas({
           }}
         >
           <ReactFlow<Item, Connection>
-            nodes={displayNodes}
-            edges={edges}
+            nodes={shared.ready ? displayNodes : []}
+            edges={shared.ready ? edges : []}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onNodesChange={changes}

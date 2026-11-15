@@ -55,7 +55,8 @@ edge/center snapping, zoom-independent distances, distant references, hysteresis
 formation membership, containing regions and deterministic ties. Native Electron
 checks use real mouse/wheel input and two process launches with temporary private
 or shared profiles. They cover enlarged handle hit-testing and unchanged edge
-paths, selection visibility, navigation over editors/resizers/readers/isolated
+paths, selection visibility, immediate and delayed shared-board opening,
+navigation over editors/resizers/readers/isolated
 players, normal scroll, transient guides, rigid groups/multi-selection/regions,
 and saved positions through Undo/Redo and reopening. No installed workspace is
 opened. The existing keyboard/editor/reader/connection smoke suites remain checks
@@ -66,3 +67,8 @@ build workflow. Local runtime validation is on Fedora. Each release attaches
 installers only after both platforms pass their source and packaged checks,
 including Windows installer installation, launch and uninstall. Mixed-OS manual
 acceptance, display scaling and large real-world boards remain manual checks.
+
+Shared nodes enter React Flow after the live controller is ready. A one-time
+anchor refresh at each controller handoff also covers recovery. This prevents
+loading-snapshot measurements from being discarded before the first connection;
+zooming still leaves the measured handle boxes unchanged.

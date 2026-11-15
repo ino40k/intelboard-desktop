@@ -48,20 +48,34 @@ export async function runSmoke(window, service, dir) {
     style: { width: w, height: h },
     data,
   });
-  const load = async (nodes, zoom = 1) => {
+  const load = async (nodes, zoom = 1, delaySharedOpen = false) => {
     const board = service.store.create("Synthetic canvas interactions");
     board.viewport = { x: 60, y: 100, zoom };
     board.nodes = nodes;
     service.store.save(board.id, board);
     if (process.env.INTELBOARD_CANVAS_SHARED)
       await service.collaboration.handle("share", board.id);
-    await js(`localStorage.setItem('intelboard.last','${board.id}')`);
-    await window.reload();
-    await wait(
-      `!!document.querySelector('[data-id="${nodes[0].id}"]') && !document.querySelector('.canvas[inert]') && document.querySelectorAll('.react-flow__node').length===${nodes.length} && Array.from(document.querySelectorAll('.react-flow__node')).every(n=>getComputedStyle(n).visibility!=='hidden')`,
-    );
-    await pause(80);
-    return board;
+    const manager = service.collaboration,
+      handle = manager.handle;
+    if (delaySharedOpen)
+      manager.handle = async function (operation, id, body) {
+        if (operation === "open" && id === board.id) await pause(350);
+        return handle.call(this, operation, id, body);
+      };
+    try {
+      await js(`localStorage.setItem('intelboard.last','${board.id}')`);
+      await window.reload();
+      if (delaySharedOpen) {
+        await wait(`!!document.querySelector('.canvas[inert]')`);
+      }
+      await wait(
+        `!!document.querySelector('[data-id="${nodes[0].id}"]') && !document.querySelector('.canvas[inert]') && document.querySelectorAll('.react-flow__node').length===${nodes.length} && Array.from(document.querySelectorAll('.react-flow__node')).every(n=>getComputedStyle(n).visibility!=='hidden')`,
+      );
+      await pause(80);
+      return board;
+    } finally {
+      if (delaySharedOpen) manager.handle = handle;
+    }
   };
   const view = () =>
     js(
@@ -304,10 +318,17 @@ export async function runSmoke(window, service, dir) {
   console.log(
     "canvas: right navigation over local reader and isolated player frames passed",
   );
-  for (const zoom of [1, 0.5, 0.2, 2]) {
+  const handleViews = [
+    [1, false],
+    [0.5, false],
+    ...(process.env.INTELBOARD_CANVAS_SHARED ? [[0.5, true]] : []),
+    [0.2, false],
+    [2, false],
+  ];
+  for (const [zoom, delaySharedOpen] of handleViews) {
     const a = card(0, 0),
       b = card(380, 0);
-    await load([a, b], zoom);
+    await load([a, b], zoom, delaySharedOpen);
     await click(`[data-id="${a.id}"] .note-eyebrow`);
     await mouse("mouseMove", { x: 1100, y: 700 }, "left");
     await wait(
