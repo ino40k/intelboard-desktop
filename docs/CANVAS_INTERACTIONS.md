@@ -1,6 +1,6 @@
 # Canvas navigation and alignment
 
-These changes are included in the 1.1.0-dev.3 desktop preview, following the
+These changes are included in the 1.1.0-dev.4 desktop preview, following the
 1.1.0-dev.1 collaboration preview. Stable 1.0.4 remains available separately.
 
 - Hold the right mouse button and drag to pan, including over notes, images,

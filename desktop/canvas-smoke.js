@@ -71,21 +71,24 @@ export async function runSmoke(window, service, dir) {
     js(
       `(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
     );
+  let heldButton = null;
   const mouse = async (type, p, button = "left", modifiers = []) => {
+    if (type === "mouseDown") heldButton = button;
     window.webContents.sendInputEvent({
       type,
       x: Math.round(p.x),
       y: Math.round(p.y),
-      button,
+      button: type === "mouseMove" ? heldButton || undefined : button,
       clickCount: 1,
       modifiers:
-        type === "mouseMove"
+        type === "mouseMove" && heldButton
           ? [
               ...modifiers,
-              button === "right" ? "rightButtonDown" : "leftButtonDown",
+              heldButton === "right" ? "rightButtonDown" : "leftButtonDown",
             ]
           : modifiers,
     });
+    if (type === "mouseUp") heldButton = null;
     await pause(25);
   };
   const click = async (selector, modifiers = []) => {
@@ -309,6 +312,13 @@ export async function runSmoke(window, service, dir) {
     await mouse("mouseMove", { x: 1100, y: 700 }, "left");
     await wait(
       `getComputedStyle(document.querySelector('[data-id="${a.id}"] .react-flow__handle-right')).opacity==='1'`,
+    );
+    assert.deepEqual(
+      await js(
+        `(()=>{const m=new DOMMatrix(getComputedStyle(document.querySelector('[data-id="${a.id}"]')).transform);return [m.e,m.f];})()`,
+      ),
+      [0, 0],
+      "Idle hover after selection must not drag the node",
     );
     const scale = await js(
       `(()=>{const h=document.querySelector('[data-id="${a.id}"] .react-flow__handle-right'),b=h.getBoundingClientRect();return {width:b.width,pseudo:parseFloat(getComputedStyle(h,'::before').width),opacity:getComputedStyle(h).opacity,hidden:getComputedStyle(document.querySelector('[data-id="${b.id}"] .react-flow__handle-right')).opacity};})()`,
