@@ -2,11 +2,12 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { databaseCompatibility } from '../shared/update-compatibility.js';
 export function openStore(dir) {
   mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, "intelboard.sqlite"));
   const version = db.prepare("PRAGMA user_version").get().user_version;
-  if (version > 2) {
+  if (version > databaseCompatibility.readMax) {
     db.close();
     throw new Error(
       "This workspace was created by a newer IntelBoard version. Install that version to open it.",
@@ -30,7 +31,7 @@ export function openStore(dir) {
     CREATE TABLE IF NOT EXISTS collab_profiles(public_key TEXT PRIMARY KEY,record TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS collab_downloads(hash TEXT PRIMARY KEY,manifest TEXT NOT NULL,received INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS collab_asset_access(doc_id TEXT NOT NULL REFERENCES collab_boards(doc_id) ON DELETE CASCADE,hash TEXT NOT NULL,PRIMARY KEY(doc_id,hash));
-    PRAGMA user_version=2;
+    PRAGMA user_version=${databaseCompatibility.write};
     COMMIT;`);
   let inTransaction = false;
   let commits = [],

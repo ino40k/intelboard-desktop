@@ -66,6 +66,8 @@ export class CollaborationManager extends EventEmitter {
     this.presences = new Map();
     this.dialing = new Set();
     this.closed = false;
+    this.updatePaused = false;
+    this.localWork = new Set();
     if (service.store.db.prepare("SELECT 1 FROM collab_boards LIMIT 1").get())
       this.ensure();
   }
@@ -422,6 +424,8 @@ export class CollaborationManager extends EventEmitter {
       });
   }
   request(context, method, body = {}) {
+    if (this.updatePaused || this.closed)
+      return Promise.reject(new Error("IntelBoard is preparing an update"));
     if (this.pending.size > 128)
       return Promise.reject(
         new Error("Synchronization is busy; retry shortly"),
@@ -449,7 +453,10 @@ export class CollaborationManager extends EventEmitter {
       );
     });
   }
-  async frame(event) {
+  frame(event) {
+    return this.trackUpdateWork(() => this.frameWork(event));
+  }
+  async frameWork(event) {
     if (this.closed) return;
     const context = this.connections.get(event.id);
     if (!context) return;
@@ -639,7 +646,10 @@ export class CollaborationManager extends EventEmitter {
       this.notify(context.boardId);
     }
   }
-  async synchronize(context) {
+  synchronize(context) {
+    return this.trackUpdateWork(() => this.synchronizeWork(context));
+  }
+  async synchronizeWork(context) {
     if (!context.authenticated || context.syncing || context.lane !== "control")
       return;
     context.syncing = true;
@@ -692,7 +702,10 @@ export class CollaborationManager extends EventEmitter {
       this.notify(context.boardId);
     }
   }
-  async dial(publicKey, boardId, lane = "control") {
+  dial(publicKey, boardId, lane = "control") {
+    return this.trackUpdateWork(() => this.dialWork(publicKey, boardId, lane));
+  }
+  async dialWork(publicKey, boardId, lane = "control") {
     const profile = this.peers.get(publicKey);
     if (!profile)
       throw new Error("No connection address is known for this collaborator");
@@ -709,7 +722,10 @@ export class CollaborationManager extends EventEmitter {
     this.notify(boardId);
     return context;
   }
-  async tick() {
+  tick() {
+    return this.trackUpdateWork(() => this.tickWork());
+  }
+  async tickWork() {
     if (this.closed || !this.address) return;
     if (Date.now() - (this.lastCleanup || 0) > 3600000) this.cleanup();
     for (const context of this.connections.values())
@@ -761,7 +777,10 @@ export class CollaborationManager extends EventEmitter {
       Date.now() - 86400000,
     );
   }
-  async download(context) {
+  download(context) {
+    return this.trackUpdateWork(() => this.downloadWork(context));
+  }
+  async downloadWork(context) {
     if (this.transfers.has(context.boardId)) return;
     const entry = this.engine.get(context.boardId),
       required = this.requiredAssets(entry),
@@ -1247,7 +1266,26 @@ export class CollaborationManager extends EventEmitter {
     entry?.doc.destroy();
     this.engine?.documents.delete(boardId);
   }
+  trackUpdateWork(action) {
+    if (this.updatePaused || this.closed) return Promise.resolve();
+    const task = Promise.resolve().then(action);
+    this.localWork.add(task);
+    return task.finally(() => this.localWork.delete(task));
+  }
+  async pauseForUpdate() {
+    this.updatePaused = true;
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error("IntelBoard is preparing an update"));
+    }
+    this.pending.clear();
+    await Promise.allSettled([...this.localWork]);
+  }
+  resumeAfterUpdate() {
+    this.updatePaused = false;
+  }
   close() {
+    if (this.closed) return;
     this.closed = true;
     clearInterval(this.timer);
     this.transport?.close();

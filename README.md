@@ -11,7 +11,7 @@ A private visual workspace for sources, thoughts, media, and the connections bet
 
 ## Collaboration development preview
 
-Development preview **1.1.0-dev.5** adds invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Private boards remain private until explicitly shared. Download the collaboration preview from [its prerelease page](https://github.com/ino40k/intelboard-desktop/releases/tag/v1.1.0-dev.5). This update also adds right-button navigation, zoom-aware handles and magnetic alignment; see [canvas interactions](docs/CANVAS_INTERACTIONS.md). The stable 1.0.4 edition does not include these changes. See [collaboration architecture and usage](docs/COLLABORATION.md) and [validation](docs/COLLABORATION_VALIDATION.md).
+Development preview **1.1.0-dev.6** includes invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Private boards remain private until explicitly shared. Download the collaboration preview from [its prerelease page](https://github.com/ino40k/intelboard-desktop/releases/tag/v1.1.0-dev.6). This update also adds right-button navigation, zoom-aware handles and magnetic alignment; see [canvas interactions](docs/CANVAS_INTERACTIONS.md). The stable 1.0.4 edition does not include these changes. See [collaboration architecture and usage](docs/COLLABORATION.md) and [validation](docs/COLLABORATION_VALIDATION.md).
 
 ## Install
 
@@ -19,9 +19,9 @@ Download the latest stable release for **Windows 11 x64** or **Fedora Linux x64*
 
 **Windows:** run `IntelBoard-<version>-win-x64.exe` and follow the installer. Installation is per user, with Start Menu and optional desktop shortcuts. Unsigned initial builds may show Windows reputation warnings. No administrator account is required for the default installation.
 
-**Fedora:** download `IntelBoard-<version>-linux-x86_64.AppImage`. In the file manager, open Properties → Permissions and allow execution, then launch it. The AppImage uses your system's normal desktop libraries; if FUSE is unavailable, use an AppImage integration tool or extract it with `./IntelBoard-<version>-linux-x86_64.AppImage --appimage-extract` and launch `squashfs-root/AppRun`. No Node.js, database server or Docker is needed. Optional desktop integration is managed by your chosen AppImage tool; IntelBoard does not install a background service.
+**Fedora:** download `IntelBoard-<version>-linux-x86_64.AppImage`. In the file manager, open Properties → Permissions and allow execution, then launch it. The AppImage uses your system's normal desktop libraries; if FUSE is unavailable, use an AppImage integration tool or extract it with `./IntelBoard-<version>-linux-x86_64.AppImage --appimage-extract` and launch `squashfs-root/AppRun`. No Node.js, database server or Docker is needed. The upcoming updater-enabled edition adds its own optional managed launcher; IntelBoard does not install a background service.
 
-Updates are manual: install the next Windows installer over the existing installation, or replace the AppImage. Keep the application ID and data folder unchanged. Boards and preferences are stored outside the installation and are preserved.
+Versions through 1.1.0-dev.5 update manually. Development preview **1.1.0-dev.6** adds green stable and yellow experimental update notifications, download progress and automatic installation/restart. Install the first updater-enabled package manually once; Linux users can then set up the managed launcher from the Updates menu or during their first update. Boards and preferences remain outside the installation. See [integrated updates, safety and validation](docs/UPDATER.md).
 
 ## Use
 
@@ -66,7 +66,7 @@ npm run package:win     # Windows: release/*.exe
 
 ## Releases
 
-GitHub Actions builds Windows and Linux on their own hosted runners for pull requests, main branch changes, version tags and manual runs. Download the resulting build artifacts for testing. Publishing a GitHub release explicitly triggers both builds and attaches the `.exe`, `.AppImage`, native dependency source archive and SHA-256 checksums after validation. Tag pushes alone do not publish a release. No external service, signing secret or auto-update server is required.
+GitHub Actions builds Windows and Linux on their own hosted runners for pull requests, main branch changes, version tags and manual runs. Download the resulting build artifacts for testing. Publishing a GitHub release explicitly triggers both builds and attaches the `.exe`, `.AppImage`, native dependency source archive and SHA-256 checksums after validation. Tag pushes alone do not publish a release. The integrated updater requires a private Ed25519 key in a GitHub Actions secret; its public key ships in the app. The signed readiness marker is uploaded last after both platforms and uploaded hashes pass validation. No paid service or separate update server is required.
 
 Follow [RELEASING.md](docs/RELEASING.md) for versioning, repository setup and publication. Source and releases are hosted at [ino40k/intelboard-desktop](https://github.com/ino40k/intelboard-desktop).
 

@@ -2,6 +2,19 @@ export {};
 declare global {
   interface Window {
     intelboard: {
+      updater(
+        operation: string,
+        body?: unknown,
+      ): Promise<import("./UpdateControls").UpdateState>;
+      onUpdater(
+        listener: (state: import("./UpdateControls").UpdateState) => void,
+      ): () => void;
+      onUpdatePreparation(
+        listener: (
+          action: "prepare" | "release",
+        ) => Promise<Record<string, string>>,
+      ): () => void;
+
       request(
         route: string,
         method: string,

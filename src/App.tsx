@@ -1,3 +1,4 @@
+import { UpdateControls } from "./UpdateControls";
 import { ThemeSelect } from "./ThemeSelect";
 import { readTheme } from "./themes";
 import { useState, useEffect, useCallback, useId } from "react";
@@ -292,6 +293,7 @@ export default function App() {
       <header className="library-header">
         <Brand />
         <div className="header-right">
+          <UpdateControls />
           <span className="private-badge">
             <span />
             PRIVATE WORKSPACE

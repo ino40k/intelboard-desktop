@@ -1,3 +1,5 @@
+import { setupUpdater } from "./updater/bootstrap.js";
+import { prepareDatabase } from "./updater/recovery.js";
 import {
   app,
   BrowserWindow,
@@ -58,7 +60,9 @@ else {
   let window,
     service,
     transferBusy = false,
-    quitting = false;
+    quitting = false,
+    updateRuntime,
+    activeOperations = 0;
   const trusted = (event) => {
     const frame = event.senderFrame;
     if (
@@ -97,17 +101,7 @@ else {
     .then(async () => {
       const data = app.getPath("userData");
       mkdirSync(data, { recursive: true, mode: 0o700 });
-      // Keep the previous clean-start database snapshot; SQLite recovery owns WAL after crashes.
-      const database = path.join(data, "intelboard.sqlite");
-      if (existsSync(database)) {
-        const { DatabaseSync, backup } = await import("node:sqlite");
-        const source = new DatabaseSync(database);
-        try {
-          await backup(source, path.join(data, "intelboard.previous.sqlite"));
-        } finally {
-          source.close();
-        }
-      }
+      await prepareDatabase(data);
       service = createService(data);
       const collaboration = new CollaborationManager(service, data, {
         resources: app.isPackaged ? process.resourcesPath : root,
@@ -144,10 +138,22 @@ else {
         async (event, route, method, body) => {
           try {
             trusted(event);
-            return {
-              ok: true,
-              data: await service.request(route, method, body),
-            };
+            if (
+              updateRuntime?.isApplying() ||
+              (updateRuntime?.isPreparing() &&
+                method !== "GET" &&
+                method !== "PUT")
+            )
+              throw Error("IntelBoard is saving before an update.");
+            activeOperations++;
+            try {
+              return {
+                ok: true,
+                data: await service.request(route, method, body),
+              };
+            } finally {
+              activeOperations--;
+            }
           } catch (e) {
             return { ok: false, error: e.message, status: e.status || 400 };
           }
@@ -167,10 +173,17 @@ else {
         async (event, operation, boardId, body) => {
           try {
             trusted(event);
-            return {
-              ok: true,
-              data: await collaboration.handle(operation, boardId, body),
-            };
+            if (updateRuntime?.isApplying())
+              throw Error("IntelBoard is restarting for an update.");
+            activeOperations++;
+            try {
+              return {
+                ok: true,
+                data: await collaboration.handle(operation, boardId, body),
+              };
+            } finally {
+              activeOperations--;
+            }
           } catch (error) {
             return { ok: false, error: error.message };
           }
@@ -191,8 +204,10 @@ else {
         "intelboard:transfer",
         async (event, operation, boardId) => {
           trusted(event);
-          if (transferBusy)
-            throw new Error("Another file operation is in progress");
+          if (transferBusy || updateRuntime?.isPreparing())
+            throw new Error(
+              "Wait for the current file operation or update to finish.",
+            );
           transferBusy = true;
           try {
             if (operation === "import") {
@@ -330,7 +345,10 @@ else {
         }
       });
       window.on("close", (event) => {
-        if (transferBusy) {
+        if (
+          transferBusy ||
+          (updateRuntime?.isPreparing() && !updateRuntime?.isApplying())
+        ) {
           event.preventDefault();
           return;
         }
@@ -378,6 +396,15 @@ else {
       // Attachment links use native Save As instead of navigating a privileged window.
       window.webContents.session.on("will-download", (event) => {
         event.preventDefault();
+      });
+      updateRuntime = await setupUpdater({
+        window,
+        service,
+        data,
+        root,
+        trusted,
+        smoke,
+        isBusy: () => transferBusy || activeOperations > 0,
       });
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
@@ -428,6 +455,7 @@ else {
               { role: "zoomOut" },
             ],
           },
+          updateRuntime.menu(),
           {
             label: "Help",
             submenu: [
@@ -448,13 +476,17 @@ else {
       if (smoke) {
         try {
           const { runSmoke } = await import(
-            process.env.INTELBOARD_CANVAS_SMOKE
-              ? "./canvas-smoke.js"
-              : process.env.INTELBOARD_COLLAB_SMOKE
-                ? "./collaboration/smoke.js"
-                : "./smoke.js"
+            process.env.INTELBOARD_UPDATER_E2E
+              ? "./updater/e2e.js"
+              : process.env.INTELBOARD_CANVAS_SMOKE
+                ? "./canvas-smoke.js"
+                : process.env.INTELBOARD_COLLAB_SMOKE
+                  ? "./collaboration/smoke.js"
+                  : "./smoke.js"
           );
-          await runSmoke(window, service, smoke);
+          await runSmoke(window, service, smoke, {
+            updater: updateRuntime.updater,
+          });
           service.collaboration?.close();
           service.close();
           service = null;

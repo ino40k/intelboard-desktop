@@ -1,6 +1,6 @@
 {
   "name": "intelboard-desktop",
-  "version": "1.1.0-dev.5",
+  "version": "1.1.0-dev.6",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,12 +19,18 @@
     "test:collaboration-ui": "node scripts/smoke-collaboration.js",
     "test:collaboration-network": "node scripts/test-network.js",
     "test:canvas": "node scripts/smoke-canvas.js",
-    "test:canvas:shared": "node scripts/smoke-canvas.js --shared"
+    "test:canvas:shared": "node scripts/smoke-canvas.js --shared",
+    "updates:key": "node scripts/update-key.js",
+    "updates:metadata": "node scripts/prepare-update-metadata.js",
+    "updates:sign": "node scripts/sign-updates.js",
+    "updates:fixtures": "node scripts/build-update-fixtures.js",
+    "test:updater-e2e": "node scripts/test-updater-e2e.js"
   },
   "dependencies": {
     "@xyflow/react": "^12.9.0",
     "cheerio": "^1.1.2",
     "dompurify": "^3.4.15",
+    "electron-updater": "6.8.11",
     "epubjs": "^0.3.93",
     "fast-diff": "1.3.0",
     "ipaddr.js": "^2.2.0",
@@ -34,6 +40,7 @@
     "pdfjs-dist": "^6.3.289",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "semver": "7.8.6",
     "sharp": "^0.35.4",
     "yauzl": "^3.4.0",
     "yjs": "13.6.33",
@@ -128,7 +135,16 @@
     "npmRebuild": true,
     "appImage": {
       "executableArgs": []
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ino40k",
+        "repo": "intelboard-desktop",
+        "releaseType": "release"
+      }
+    ],
+    "generateUpdatesFilesForAllChannels": false
   },
   "desktopName": "org.intelboard.desktop",
   "repository": {

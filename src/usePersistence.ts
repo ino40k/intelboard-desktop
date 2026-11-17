@@ -165,6 +165,20 @@ export function usePersistence(
     status: status === "saved" && activeCaptures.current ? "capturing" : status,
     error,
     save,
+    flushForUpdate: async () => {
+      clearTimeout(timer.current);
+      if (activeCaptures.current)
+        throw Error("Wait for the current capture or import to finish.");
+      const deadline = Date.now() + 10000;
+      while (busy.current && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 40));
+      if (busy.current) throw Error("A local save is still running.");
+      await save();
+      if (conflict.current || latest.current.encoded !== last.current)
+        throw Error(
+          "A local save needs attention. Resolve it before updating.",
+        );
+    },
     hasUnsaved: () =>
       enabled &&
       (latest.current.encoded !== last.current || activeCaptures.current),

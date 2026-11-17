@@ -20,7 +20,7 @@ jobs:
           - os: windows-2025
             target: win
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,6 +75,8 @@ jobs:
         run: npm run package:${{ matrix.target }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Validate updater metadata against the actual package
+        run: npm run updates:metadata
       - name: Linux packaged runtime smoke
         if: runner.os == 'Linux'
         run: |
@@ -115,6 +117,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/test-windows-install.ps1
+      - name: Build actual old and new updater test packages
+        run: node scripts/build-update-fixtures.js
+      - name: Permit Chromium user namespaces for AppImage tests on this disposable runner
+        if: runner.os == 'Linux'
+        run: |
+          if command -v apparmor_parser >/dev/null; then
+            sudo tee /etc/apparmor.d/intelboard-updater-tests >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile intelboard-updater-tests /tmp/appimage_extracted_*/intelboard flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+            sudo apparmor_parser -r /etc/apparmor.d/intelboard-updater-tests
+          fi
+      - name: Linux real AppImage stable and experimental update/restart tests
+        if: runner.os == 'Linux'
+        run: timeout 360s xvfb-run -a node scripts/test-updater-e2e.js
+      - name: Windows real NSIS stable and experimental update/restart tests
+        if: runner.os == 'Windows'
+        run: node scripts/test-updater-e2e.js
       - name: Audit staged source and packaged application
         run: npm run audit:release
       - run: node scripts/checksums.js
@@ -126,6 +149,11 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.sha256
+            release/*.blockmap
+            release/latest.yml
+            release/latest-linux.yml
+            release/experimental.yml
+            release/experimental-linux.yml
   dependency-sources:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -150,16 +178,29 @@ jobs:
     if: github.event_name == 'release'
     needs: [build, dependency-sources]
     runs-on: ubuntu-24.04
+    concurrency:
+      group: signed-release-${{ github.event.release.tag_name }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
       - uses: actions/download-artifact@v4
         with:
           pattern: IntelBoard-*
           path: installers
           merge-multiple: true
-      - name: Attach files to the release the maintainer published
+      # No npm install or dependency code is executed in the signing job.
+      # A missing secret fails closed; ordinary push/PR builds never receive it.
+      - name: Verify both platforms and sign the complete release marker
+        env:
+          INTELBOARD_UPDATE_SIGNING_KEY: ${{ secrets.INTELBOARD_UPDATE_SIGNING_KEY }}
+        run: node scripts/sign-updates.js installers
+      - name: Upload payloads, verify GitHub digests, publish readiness marker last
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$GITHUB_REF_NAME" installers/* --clobber
+        run: node scripts/publish-update.js installers

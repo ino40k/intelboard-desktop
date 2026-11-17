@@ -7,7 +7,8 @@ const dir=await mkdtemp(path.join(os.tmpdir(),'intelboard-smoke-'));
 const binary=process.env.INTELBOARD_TEST_BINARY||electron;
 const args=process.env.INTELBOARD_TEST_BINARY?[]:['.'];
 // Local BrowserWindows stay hidden; hosted Windows CI uses its disposable desktop.
-// No sandbox bypass. One process tree, two starts, 30s per start, killed on timeout.
+// Allow more time for Chromium startup on low-resource Windows VMs.
+const launchTimeout=process.platform==='win32'?60_000:30_000;
 try {
   for(let iteration=0;iteration<2;iteration++) {
     await new Promise((resolve,reject)=>{
@@ -16,8 +17,8 @@ try {
       const timer=setTimeout(()=>{
         if(process.platform!=='win32'){try{process.kill(-child.pid,'SIGKILL');}catch{}}
         else spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,timeout:5000});
-        reject(new Error('Desktop smoke deadline exceeded: '+output));
-      },30000);
+        reject(new Error(`Desktop smoke launch ${iteration+1} exceeded ${launchTimeout/1000}s: ${output}`));
+      },launchTimeout);
       child.on('error',error=>{clearTimeout(timer);reject(error);});
       child.on('exit',async code=>{clearTimeout(timer);if(code===0)resolve();else reject(new Error('Desktop smoke failed: '+output+'\n'+await readFile(path.join(dir,'failure.txt'),'utf8').catch(()=>'')));});
     });

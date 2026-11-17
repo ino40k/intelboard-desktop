@@ -3,8 +3,9 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 const failures=[];
 const privatePatterns=[/\b[\w.-]+\.(?:lan|internal)\b/i,/\/(?:home|root)\/[a-z][a-z0-9_-]*\//i,/192\.168\.\d+\.\d+/,/intelboard_session=[a-f0-9]{32,}/i,/\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}/,/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|AKIA[A-Z0-9]{16})\b/];
-const forbidden=/(^|\/)(\.env(?:\..*)?|data|test-results|trace\.zip|intelboard\.sqlite.*|Dockerfile.*|compose.*\.ya?ml|HANDOFF\.md|AGENTS\.md|\.git)(\/|$)/i;
+const forbidden=/(^|\/)(\.env(?:\..*)?|\.update-keys|data|test-results|trace\.zip|intelboard\.sqlite.*|Dockerfile.*|compose.*\.ya?ml|HANDOFF\.md|AGENTS\.md|\.git)(\/|$)/i;
 async function check(file,relative=file,dependency=false) {
+  relative=relative.replaceAll('\\','/');
   if(forbidden.test(relative))failures.push('Forbidden distribution path: '+relative);
   if(!dependency && /\.(?:js|cjs|mjs|ts|tsx|css|json|html|md|txt|ya?ml|svg)$/.test(file)) {
     const content=await readFile(file,'utf8');
@@ -29,10 +30,11 @@ for (const archive of ['release/linux-unpacked/resources/app.asar','release/win-
   try { await stat(archive); } catch { continue; }
   const entries=asar.listPackage(archive);
   for(const file of entries) {
-    const relative=file.replace(/^\//,'');
+    const entry=file.replace(/^[/\\]/,'');
+    const relative=entry.replaceAll('\\','/');
     if(forbidden.test(relative))failures.push('Forbidden package path: '+relative);
     if(!relative.startsWith('node_modules/') && /\.(js|cjs|mjs|json|html|css|txt)$/.test(relative)) {
-      try {const content=asar.extractFile(archive,relative).toString();if(privatePatterns.some(pattern=>pattern.test(content)))failures.push('Private marker in package: '+relative);}catch{ }
+      try {const content=asar.extractFile(archive,entry).toString();if(privatePatterns.some(pattern=>pattern.test(content)))failures.push('Private marker in package: '+relative);}catch{ }
     }
   }
   inspected++;console.log(`Reviewed ${entries.length} packaged paths in ${archive}.`);

@@ -1,3 +1,5 @@
+import { UpdateControls } from "./UpdateControls";
+import { registerUpdateBarrier, isUpdatePreparing } from "./updateSafety";
 import { documentFormat } from "../shared/document.js";
 import {
   connectionHandleScale,
@@ -284,6 +286,28 @@ export default function Canvas({
         !!shared.controller?.outbox.length ||
         nodes.some((n) => n.data.loading)
       : privatePersistence.hasUnsaved();
+  const updateBarrier = useRef<() => Promise<void>>(async () => {});
+  updateBarrier.current = async () => {
+    if (
+      manipulating ||
+      rightNavigating ||
+      nodes.some((n) => n.data.loading) ||
+      shared.controller?.composing
+    )
+      throw Error(
+        "Finish the current edit, drag, or import before IntelBoard restarts.",
+      );
+    if (board.shared) {
+      if (!shared.ready)
+        throw Error("Wait for the shared board to finish opening.");
+      await shared.controller!.flush();
+      shared.controller!.flushSync();
+      if (shared.controller!.outbox.length)
+        throw Error("Local shared-board changes have not finished saving.");
+      await collaboration("viewport", board.id, viewport);
+    } else await privatePersistence.flushForUpdate();
+  };
+  useEffect(() => registerUpdateBarrier(() => updateBarrier.current()), []);
   const checkpoint = useCallback(() => {
     if (board.shared) {
       shared.ref.current?.checkpoint();
@@ -845,6 +869,7 @@ export default function Canvas({
       notify(`${ns.length} ${ns.length === 1 ? "item" : "items"} copied`);
     }
     function key(e: KeyboardEvent) {
+      if (isUpdatePreparing()) return;
       if (isInput(e.target)) return;
       const command = e.metaKey || e.ctrlKey,
         key = e.key.toLowerCase();
@@ -996,6 +1021,7 @@ export default function Canvas({
             />
           </div>
           <div className="header-right">
+            <UpdateControls />
             <CollaborationControls
               boardId={board.id}
               controller={shared.controller}

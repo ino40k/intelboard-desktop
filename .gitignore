@@ -17,3 +17,5 @@ coverage/
 Thumbs.db
 native/bin/
 native/network/*.exe
+
+.update-keys/
