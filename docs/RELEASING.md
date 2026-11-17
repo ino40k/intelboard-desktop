@@ -70,7 +70,7 @@ gh release create v1.2.0-dev.1 --repo ino40k/intelboard-desktop \
   --notes-file /tmp/intelboard-release-notes.md
 ```
 
-This explicit `release: published` event triggers a fresh build and validation of both platforms and the dependency source archive. Packaging always uses `--publish never`. The separate attachment job waits for all required jobs, validates the assets, signs and uploads them. Wait for that job to finish; a visible release page alone does not mean an update is ready.
+This explicit `release: published` event triggers a fresh build and validation of both platforms and the dependency source archive. Hosted Windows Server checks installation and data; genuine automatic-restart acceptance is performed on Windows 11 (see UPDATER_VALIDATION.md). Packaging always uses `--publish never`. The separate attachment job waits for all required jobs, validates the assets, signs and uploads them. Wait for that job to finish; a visible release page alone does not mean an update is ready.
 
 ## Publish stable
 

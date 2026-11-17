@@ -28,10 +28,16 @@ Hosted Windows runners can spell the same temporary directory using an 8.3 short
 
 Production AppImage packaging and metadata validation, unit checks, desktop/collaboration checks and private/shared canvas regressions passed. Real stable 9.0.0 → 9.0.1 and experimental 9.0.0 → 9.1.0-dev.1 AppImage updates verified the actual downloader, intermediate progress, final save, backup, atomic replacement and restart. They preserved synthetic boards, attachments, theme/preferences, offline collaboration edits and identity. The stable launcher, executable permissions, previous image and original downloaded image were verified.
 
-The seven-file Windows patch was reviewed against the Fedora source, with the incoming full tree verified as `7a84012d135d6b974d3eec0972a2a6c4e7e2c40c`, before integration. The CI workflow repeats native update tests on both platforms before attaching a signed release.
+The seven-file Windows patch was reviewed against the Fedora source, with the incoming full tree verified as `7a84012d135d6b974d3eec0972a2a6c4e7e2c40c`, before integration. The CI workflow repeats native AppImage update/restart tests and Windows Server NSIS install/data checks before attaching a signed release.
 
 ## Limits
 
 Fixture versions are current-source builds with synthetic version numbers. The release API/feed is synthetic and native package downloads use loopback HTTP behind the main-process smoke gate; production still requires approved GitHub HTTPS origins and authentic signatures. These tests do not claim historical updater-free versions can update themselves. Such users need one manual installation of an updater-enabled release.
 
 Power loss, antivirus interference, reputation prompts on other Windows machines, a full live CDN update, long-lived live peer sessions and high-DPI/manual UI acceptance remain outside this automated coverage. Installers are unsigned by Authenticode; Ed25519 update authenticity is separate. No test disables the Electron sandbox, context isolation, signature verification or renderer Node restrictions.
+
+### Hosted Windows Server scope
+
+The hosted Windows Server 2025 runner completed verified download, save/backup, silent NSIS replacement, versioned registration and shortcut retention, but its desktop shell did not relaunch the updated process, even with Explorer present. This differs from the supported Windows 11 VM's passed automatic-restart results. Server CI therefore explicitly launches the fully installed new executable to verify the preserved workspace and reports automatic restart as **not assessed on Server**. It does not report that explicit launch as an automatic restart. The special mode is restricted to hosted Server (ProductType 3); the ordinary test still requires genuine automatic restart on Windows 11. Future production updater changes require repeating that full Windows 11 VM acceptance.
+
+The production updater, renderer, shared model, dependencies and storage code match the Windows-tested patch; the only subsequent production-source change is correcting the About dialog's update-menu wording.

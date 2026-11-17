@@ -11,7 +11,11 @@ import {
   REPOSITORY,
   digest,
 } from "../desktop/updater/manifest.js";
-const root = path.resolve(process.argv[2] || "test-results/updater-packages");
+const root = path.resolve(
+  process.argv.slice(2).find((value) => !value.startsWith("--")) ||
+    "test-results/updater-packages",
+);
+const serverInstallCheck = process.argv.includes("--server-install-check");
 const platform = process.platform;
 const windowsState = () => {
   const value = JSON.parse(
@@ -37,13 +41,15 @@ $installs = @(foreach ($root in $locations) {
 $shell = New-Object -ComObject WScript.Shell
 $folders = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('StartMenu')) | Where-Object { $_ -and (Test-Path $_) }
 $shortcuts = @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter 'IntelBoard*.lnk' -Recurse -File } | ForEach-Object { @{ path=$_.FullName; target=$shell.CreateShortcut($_.FullName).TargetPath } } | Sort-Object { $_.path })
-@{ installs=$installs; shortcuts=$shortcuts } | ConvertTo-Json -Depth 4 -Compress
+$processes = @(Get-Process | Where-Object { $_.ProcessName -like 'IntelBoard*' } | ForEach-Object { $_.ProcessName })
+@{ installs=$installs; shortcuts=$shortcuts; processes=$processes } | ConvertTo-Json -Depth 4 -Compress
 `,
       ],
       { encoding: "utf8", windowsHide: true },
     ),
   );
   return {
+    processes: value.processes,
     installs: value.installs
       .map(({ key, location, version }) => ({ key, location, version }))
       .sort((a, b) => a.key.localeCompare(b.key)),
@@ -54,6 +60,29 @@ $shortcuts = @($folders | ForEach-Object { Get-ChildItem -LiteralPath $_ -Filter
 };
 if (!["linux", "win32"].includes(platform))
   throw Error("Native updater E2E supports Linux or Windows");
+if (serverInstallCheck) {
+  if (platform !== "win32" || process.env.GITHUB_ACTIONS !== "true")
+    throw Error(
+      "The installation-only check is restricted to hosted Windows Server CI; Windows 11 must use the full restart test.",
+    );
+  const productType = execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "(Get-CimInstance Win32_OperatingSystem).ProductType",
+    ],
+    { encoding: "utf8", windowsHide: true },
+  ).trim();
+  if (productType !== "3")
+    throw Error(
+      "Windows client systems must use the full automatic-restart test.",
+    );
+  console.log(
+    "Windows Server CI: verifying native update installation and data with an explicit post-install app launch; automatic restart is assessed separately on Windows 11.",
+  );
+}
 if (platform === "win32") {
   if (
     process.env.GITHUB_ACTIONS !== "true" &&
@@ -316,6 +345,8 @@ for (const channel of ["stable", "experimental"]) {
     child.once("error", (error) => {
       output += error.stack;
     });
+    let manualVerificationLaunch = false,
+      nextInstallCheck = Date.now() + 2000;
     const deadline = Date.now() + 150000;
     while (
       Date.now() < deadline &&
@@ -327,6 +358,33 @@ for (const channel of ["stable", "experimental"]) {
             "\n" +
             output,
         );
+      if (
+        serverInstallCheck &&
+        !manualVerificationLaunch &&
+        childExit?.code === 0 &&
+        Date.now() >= nextInstallCheck
+      ) {
+        nextInstallCheck = Date.now() + 2000;
+        const installed = windowsState();
+        if (
+          installed.installs.length === 1 &&
+          installed.installs[0].version === target &&
+          installed.processes.length === 0
+        ) {
+          manualVerificationLaunch = true;
+          const verifyChild = spawn(initial, ["--disable-gpu"], {
+            env,
+            stdio: "ignore",
+            windowsHide: true,
+          });
+          verifyChild.once("error", (error) => {
+            output += error.stack;
+          });
+          console.log(
+            `Windows Server installed ${target}; explicitly launching the installed app to verify durable workspace data. This is not an automatic-restart assertion.`,
+          );
+        }
+      }
       await pause(100);
     }
     if (!fs.existsSync(path.join(profile, "update-result.json"))) {
@@ -404,9 +462,17 @@ for (const channel of ["stable", "experimental"]) {
       result.shortcuts = true;
       result.sameInstallation = true;
     }
+    if (serverInstallCheck) {
+      result.restart = "not assessed on Windows Server";
+      result.manualVerificationLaunch = manualVerificationLaunch;
+      fs.writeFileSync(
+        path.join(profile, "update-result.json"),
+        JSON.stringify(result),
+      );
+    }
     console.log(JSON.stringify(result));
     console.log(
-      `Native ${platform} ${channel} update and restart passed. Synthetic profile: ${profile}`,
+      `Native ${platform} ${channel} ${serverInstallCheck ? "installer/data verification" : "update and restart"} passed. Synthetic profile: ${profile}`,
     );
   } finally {
     const pidFile = path.join(profile, "e2e-app.pid");
