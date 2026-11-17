@@ -81,8 +81,19 @@ const hashFile = async (file) => {
   return h.digest("hex");
 };
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const sameWindowsPath = (a, b) =>
-  !!a && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const sameWindowsPath = (a, b) => {
+  if (!a || !b) return false;
+  try {
+    // TEMP may contain an 8.3 username while Windows shortcuts expand it.
+    // Compare actual filesystem paths, retaining the same-location assertion.
+    return (
+      fs.realpathSync.native(a).toLowerCase() ===
+      fs.realpathSync.native(b).toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+};
 const runInstaller = (file, args) =>
   new Promise((resolve, reject) => {
     const child = spawn(file, args, {

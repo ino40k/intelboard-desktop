@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,8 +9,8 @@ const profile = path.dirname(path.dirname(process.execPath));
 if (
   process.platform !== "win32" ||
   !app.isPackaged ||
-  path.dirname(profile).toLowerCase() !==
-    path.resolve(os.tmpdir()).toLowerCase() ||
+  realpathSync.native(path.dirname(profile)).toLowerCase() !==
+    realpathSync.native(os.tmpdir()).toLowerCase() ||
   !path.basename(profile).startsWith("intelboard-updater-e2e-") ||
   !existsSync(path.join(profile, "update-fixture.json"))
 ) {

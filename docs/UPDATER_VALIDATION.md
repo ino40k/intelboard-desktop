@@ -22,6 +22,8 @@ Windows ASAR listings contain backslashes. Release auditing now normalizes paths
 
 NSIS can restart through Explorer without inheriting the updater test's environment. Only synthetic Windows fixture packages use a dedicated entry point that reconstructs their temporary test profile from the validated fixture installation path. The production package retains `desktop/main.js` and excludes this entry point. Tests verify the versioned uninstall display name and companion installation key, and wait for confirmation transitions before clicking.
 
+Hosted Windows runners can spell the same temporary directory using an 8.3 short username or its full name. Test location checks resolve existing filesystem paths before comparison, including the fixture's temporary-directory boundary; they still require the same installation and shortcuts.
+
 ## Fedora Linux
 
 Production AppImage packaging and metadata validation, unit checks, desktop/collaboration checks and private/shared canvas regressions passed. Real stable 9.0.0 → 9.0.1 and experimental 9.0.0 → 9.1.0-dev.1 AppImage updates verified the actual downloader, intermediate progress, final save, backup, atomic replacement and restart. They preserved synthetic boards, attachments, theme/preferences, offline collaboration edits and identity. The stable launcher, executable permissions, previous image and original downloaded image were verified.
