@@ -349,6 +349,17 @@ for (const channel of ["stable", "experimental"]) {
             .readFileSync(path.join(profile, name), "utf8")
             .slice(0, 8000);
       if (platform === "win32") {
+        evidence.windows = windowsState();
+        evidence.processes = execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-Process | Where-Object { $_.ProcessName -eq 'explorer' -or $_.ProcessName -like 'IntelBoard*' } | Select-Object ProcessName,Id,SessionId | ConvertTo-Json -Compress",
+          ],
+          { encoding: "utf8", windowsHide: true },
+        );
         evidence.entries = fs
           .readdirSync(os.tmpdir())
           .filter((name) => /^intelboard-updater-entry-\d+\.json$/.test(name))

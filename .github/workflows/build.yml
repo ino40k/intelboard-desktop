@@ -137,7 +137,23 @@ jobs:
         run: timeout 360s xvfb-run -a node scripts/test-updater-e2e.js
       - name: Windows real NSIS stable and experimental update/restart tests
         if: runner.os == 'Windows'
-        run: node scripts/test-updater-e2e.js
+        shell: pwsh
+        run: |
+          # NSIS relaunches through IShellDispatch2, supplied by Explorer.
+          # Hosted Server runners may not start the desktop shell automatically.
+          $session = (Get-Process -Id $PID).SessionId
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -eq $session)) {
+            Start-Process "$env:WINDIR\explorer.exe"
+          }
+          $deadline = (Get-Date).AddSeconds(30)
+          do {
+            $desktopShell = Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -eq $session
+            if ($desktopShell) { break }
+            Start-Sleep -Milliseconds 500
+          } while ((Get-Date) -lt $deadline)
+          if (-not $desktopShell) { throw 'The NSIS restart test requires an Explorer shell in the current desktop session.' }
+          Write-Output "NSIS restart shell ready in Windows session $session"
+          node scripts/test-updater-e2e.js
       - name: Audit staged source and packaged application
         run: npm run audit:release
       - run: node scripts/checksums.js
