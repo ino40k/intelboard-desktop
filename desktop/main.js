@@ -465,7 +465,7 @@ else {
                   dialog.showMessageBox(window, {
                     message: `IntelBoard ${app.getVersion()}`,
                     detail:
-                      "Your local visual research workspace. Updates are installed manually; boards remain in your user data folder.",
+                      "Your local visual research workspace. Check the Updates menu for application updates; boards remain in your user data folder.",
                   }),
               },
             ],

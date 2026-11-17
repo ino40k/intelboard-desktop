@@ -120,7 +120,7 @@ const runInstaller = (file, args) =>
 
 for (const channel of ["stable", "experimental"]) {
   const profile = fs.mkdtempSync(
-    path.join(os.tmpdir(), "intelboard-updater-e2e-"),
+    path.join(fs.realpathSync.native(os.tmpdir()), "intelboard-updater-e2e-"),
   );
   const target = channel === "stable" ? "9.0.1" : "9.1.0-dev.1",
     artifact = path.join(root, target, artifactName(target, platform));
@@ -302,7 +302,11 @@ for (const channel of ["stable", "experimental"]) {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
-    let output = "";
+    let output = "",
+      childExit = null;
+    child.once("exit", (code, signal) => {
+      childExit = { code, signal };
+    });
     child.stdout.on("data", (b) => {
       output = (output + b).slice(-20000);
     });
@@ -329,7 +333,42 @@ for (const channel of ["stable", "experimental"]) {
       try {
         child.kill("SIGKILL");
       } catch {}
-      throw Error("Native update/restart deadline exceeded: " + output);
+      const evidence = {
+        profile,
+        childExit,
+        files: fs.readdirSync(profile),
+        state: {},
+      };
+      for (const name of [
+        "updater-observed.json",
+        "requests.json",
+        "e2e-app.pid",
+      ])
+        if (fs.existsSync(path.join(profile, name)))
+          evidence.state[name] = fs
+            .readFileSync(path.join(profile, name), "utf8")
+            .slice(0, 8000);
+      if (platform === "win32") {
+        evidence.entries = fs
+          .readdirSync(os.tmpdir())
+          .filter((name) => /^intelboard-updater-entry-\d+\.json$/.test(name))
+          .map((name) => {
+            try {
+              return JSON.parse(
+                fs.readFileSync(path.join(os.tmpdir(), name), "utf8"),
+              );
+            } catch {
+              return null;
+            }
+          })
+          .filter((entry) => entry && sameWindowsPath(entry.profile, profile));
+      }
+      throw Error(
+        "Native update/restart deadline exceeded: " +
+          output +
+          "\nSynthetic diagnostics: " +
+          JSON.stringify(evidence),
+      );
     }
     const result = JSON.parse(
       fs.readFileSync(path.join(profile, "update-result.json")),
