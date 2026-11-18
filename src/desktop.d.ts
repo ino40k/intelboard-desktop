@@ -31,11 +31,16 @@ declare global {
         operation: string,
         boardId?: string,
         body?: unknown,
-      ): Promise<{ ok: boolean; data?: unknown; error?: string }>;
+      ): Promise<{
+        ok: boolean;
+        data?: unknown;
+        error?: string;
+        code?: string;
+      }>;
       saveCollaboration(
         boardId: string,
         body: unknown,
-      ): { ok: boolean; error?: string };
+      ): { ok: boolean; error?: string; code?: string };
       onCollaboration(
         listener: (event: {
           type: string;

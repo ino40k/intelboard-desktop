@@ -32,23 +32,27 @@ export function membership(genesis, records) {
   const owner = genesis.payload.author,
     docId = genesis.payload.docId;
   const all = new Map(records.map((r) => [r.id, r]));
-  const policies = [genesis];
+  const policies = [genesis],
+    successors = new Map();
+  for (const record of records) {
+    const p = record.payload;
+    if (
+      p.kind === "policy" &&
+      p.author === owner &&
+      p.docId === docId &&
+      p.v === 1 &&
+      authentic(record)
+    ) {
+      const key = p.previous + ":" + p.sequence;
+      const prior = successors.get(key);
+      if (!prior || record.id < prior.id) successors.set(key, record);
+    }
+  }
   let previous = genesis;
   while (true) {
-    const candidates = records
-      .filter(
-        (r) =>
-          r.payload?.kind === "policy" &&
-          r.payload.previous === previous.id &&
-          r.payload.sequence === policies.length &&
-          r.payload.author === owner &&
-          r.payload.docId === docId &&
-          authentic(r),
-      )
-      .sort((a, b) => a.id.localeCompare(b.id));
-    if (!candidates.length) break;
-    const next = candidates[0],
-      p = next.payload,
+    const next = successors.get(previous.id + ":" + policies.length);
+    if (!next) break;
+    const p = next.payload,
       last = previous.payload;
     if (
       !Array.isArray(p.revoked) ||
@@ -82,51 +86,47 @@ export function membership(genesis, records) {
     ],
   ]);
   const grants = new Map(),
-    pending = records.filter((r) => r.payload?.kind === "grant");
-  for (let round = 0; round < 257 && pending.length; round++) {
-    let progress = false;
-    for (let i = pending.length - 1; i >= 0; i--) {
-      const r = pending[i],
-        p = r.payload;
+    children = new Map(),
+    proofGrants = new Map();
+  for (const record of all.values()) {
+    const p = record.payload;
+    if (
+      p.kind !== "grant" ||
+      p.docId !== docId ||
+      p.v !== 1 ||
+      !validName(p.name) ||
+      !validPublicKey(p.subject) ||
+      typeof p.parent !== "string" ||
+      !authentic(record)
+    )
+      continue;
+    if (!children.has(p.parent)) children.set(p.parent, []);
+    children.get(p.parent).push(record);
+  }
+  const queue = [genesis];
+  for (let i = 0; i < queue.length; i++) {
+    const parent = queue[i];
+    const author = parent === genesis ? owner : parent.payload.subject;
+    for (const record of children.get(parent.id) || []) {
+      const p = record.payload;
       if (
-        !authentic(r) ||
-        p.docId !== docId ||
-        p.v !== 1 ||
-        !validName(p.name) ||
-        !validPublicKey(p.subject)
-      ) {
-        pending.splice(i, 1);
-        continue;
-      }
-      if (
-        typeof p.parent !== "string" ||
-        (p.parent !== genesis.id && !grants.has(p.parent))
+        p.author !== author ||
+        (revoked.has(publicId(author)) && !frozenGrants.has(record.id))
       )
         continue;
-      const parentSubject =
-        p.parent === genesis.id ? owner : grants.get(p.parent).payload.subject;
-      if (
-        p.author !== parentSubject ||
-        (revoked.has(publicId(p.author)) && !frozenGrants.has(r.id))
-      ) {
-        pending.splice(i, 1);
-        continue;
-      }
-      grants.set(r.id, r);
-      pending.splice(i, 1);
-      progress = true;
-      if (!revoked.has(publicId(p.subject))) {
-        const old = accepted.get(p.subject);
-        if (!old || r.id < old.id)
-          accepted.set(p.subject, {
-            id: r.id,
-            publicKey: p.subject,
-            name: p.name,
-            owner: false,
-          });
-      }
+      grants.set(record.id, record);
+      queue.push(record);
+      if (p.subject === owner || revoked.has(publicId(p.subject))) continue;
+      if (!proofGrants.has(p.subject)) proofGrants.set(p.subject, record);
+      const old = accepted.get(p.subject);
+      if (!old || record.id < old.id)
+        accepted.set(p.subject, {
+          id: record.id,
+          publicKey: p.subject,
+          name: p.name,
+          owner: false,
+        });
     }
-    if (!progress) break;
   }
   if (accepted.size > 32)
     throw new Error("This release supports at most 32 collaborators per board");
@@ -137,6 +137,7 @@ export function membership(genesis, records) {
     policies,
     members: accepted,
     grants,
+    proofGrants,
     revoked,
     records: all,
   };
@@ -172,31 +173,67 @@ export function eligibleUpdates(state, updates) {
     }
     writers.set(key, r.id);
   }
-  const allowed = new Map(),
-    remaining = [...updates].sort((a, b) => a.id.localeCompare(b.id));
-  let progress = true;
-  while (progress) {
-    progress = false;
-    for (let i = remaining.length - 1; i >= 0; i--) {
-      const record = remaining[i],
-        p = record.payload;
-      if (equivocal.has(record.id)) continue;
-      const grant =
-        p.grant === state.records.get(p.grant)?.id
-          ? state.grants.get(p.grant)
-          : null;
+  const candidates = updates
+    .filter((record) => {
+      const p = record.payload;
+      if (equivocal.has(record.id)) return false;
+      const grant = state.grants.get(p.grant);
       const authority =
         (p.author === state.owner && p.grant === state.policies[0].id) ||
         grant?.payload.subject === p.author;
-      if (!authority || (!state.members.has(p.author) && !past.has(record.id)))
-        continue;
-      if (state.revoked.has(publicId(p.author)) && !past.has(record.id))
-        continue;
-      if ((p.parents || []).some((id) => !allowed.has(id))) continue;
-      allowed.set(record.id, record);
-      remaining.splice(i, 1);
-      progress = true;
+      return authority && (state.members.has(p.author) || past.has(record.id));
+    })
+    .sort((a, b) => b.id.localeCompare(a.id));
+  const allowed = new Map(
+    dependencyOrder(candidates).map((record) => [record.id, record]),
+  );
+  return {
+    allowed,
+    quarantined: updates.filter((r) => !allowed.has(r.id)),
+    past,
+  };
+}
+
+// Ready records are released once, in a stable order for a given journal.
+export function dependencyOrder(records, known = new Map()) {
+  const waiting = new Map(),
+    dependents = new Map(),
+    ready = [];
+  for (const record of records) {
+    const parents = (record.payload.parents || []).filter(
+      (id) => !known.has(id),
+    );
+    if (!parents.length) ready.push(record);
+    else waiting.set(record.id, parents.length);
+    for (const id of parents) {
+      if (!dependents.has(id)) dependents.set(id, []);
+      dependents.get(id).push(record);
     }
   }
-  return { allowed, quarantined: remaining, past };
+  for (let i = 0; i < ready.length; i++)
+    for (const next of dependents.get(ready[i].id) || []) {
+      const remaining = waiting.get(next.id) - 1;
+      waiting.set(next.id, remaining);
+      if (!remaining) ready.push(next);
+    }
+  return ready;
+}
+
+export const membershipRecords = (state) => [
+  ...state.policies.slice(1),
+  ...state.grants.values(),
+];
+
+export function membershipProof(state, identities) {
+  const records = new Map(
+    state.policies.slice(1).map((policy) => [policy.id, policy]),
+  );
+  for (const identity of identities) {
+    let grant = state.proofGrants.get(identity);
+    while (grant && !records.has(grant.id)) {
+      records.set(grant.id, grant);
+      grant = state.grants.get(grant.payload.parent);
+    }
+  }
+  return [...records.values()];
 }

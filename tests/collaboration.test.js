@@ -679,3 +679,83 @@ test("offline regions move with their whole new cluster; containment in an exist
   assert.ok(protectedLayout.warnings.length > 0);
   assert.deepEqual(protectedLayout.nodes, logical(c).nodes);
 });
+
+test("concurrent title replacements converge while the full merged text stays in the journal", async (t) => {
+  const [a, b] = await replicas(t, 2);
+  const rename = (peer, name) =>
+    peer.engine.edit(peer.id, (doc) => editText(doc.getText("title"), name));
+  rename(a, "X".repeat(195));
+  rename(b, "Y".repeat(193));
+  sync(a, b);
+  sync(b, a);
+  const title = a.service.store.get(a.id).title;
+  assert.equal(title.length, 200);
+  assert.equal(b.service.store.get(b.id).title, title);
+  for (const replica of [a, b]) {
+    const entry = replica.engine.get(replica.id);
+    assert.equal(entry.doc.getText("title").length, 388);
+    replica.engine.documents.delete(replica.id);
+    entry.doc.destroy();
+    assert.equal(boardValue(replica.engine.get(replica.id).doc).title, title);
+  }
+});
+
+test("joining with long membership history is atomic and retry uses the same board", async (t) => {
+  const [a, b] = await replicas(t, 2);
+  const entry = a.engine.get(a.id),
+    author = a.engine.identity;
+  const history = Array.from({ length: 129 }, () =>
+    signed(author, {
+      v: 1,
+      kind: "grant",
+      docId: entry.docId,
+      parent: entry.genesis.id,
+      subject: b.engine.identity.publicKey,
+      name: b.engine.identity.name,
+      nonce: randomUUID(),
+    }),
+  );
+  const store = b.service.store;
+  b.engine.get(b.id).doc.destroy();
+  b.engine.documents.delete(b.id);
+  store.remove(b.id);
+  assert.throws(
+    () =>
+      store.transaction(() => {
+        b.engine.accept(entry.genesis, history, author.publicKey);
+        throw new Error("join write interrupted");
+      }),
+    /interrupted/,
+  );
+  assert.deepEqual(store.list(), []);
+  assert.equal(b.engine.documents.size, 0);
+  b.id = b.engine.accept(entry.genesis, history, author.publicKey);
+  assert.equal(b.engine.accept(entry.genesis, history, author.publicKey), b.id);
+  assert.equal(b.engine.records(entry.docId).length, 129);
+  assert.equal(store.list().length, 1);
+});
+
+test("membership proof commits valid invitations only for a verified member", async (t) => {
+  const [a, b] = await replicas(t, 2);
+  const entry = b.engine.get(b.id);
+  const newMember = newIdentity("New collaborator");
+  const invitation = a.engine.grant(a.id, newMember.publicKey, newMember.name);
+  const before = b.engine.records(entry.docId);
+  assert.equal(
+    b.engine.authenticateMembership(
+      entry,
+      [invitation],
+      newIdentity().publicKey,
+    ),
+    false,
+  );
+  assert.deepEqual(b.engine.records(entry.docId), before);
+  assert.equal(
+    b.engine.authenticateMembership(entry, [invitation], newMember.publicKey),
+    true,
+  );
+  assert.ok(entry.members.members.has(newMember.publicKey));
+  assert.ok(
+    b.engine.records(entry.docId).some((record) => record.id === invitation.id),
+  );
+});

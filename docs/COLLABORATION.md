@@ -1,9 +1,6 @@
-# Local-first collaboration — 1.1.0 development preview
+# Local-first collaboration
 
-This development preview is distributed separately from stable 1.0.4, which does
-not include collaboration. The build workflow checks the native Windows installer;
-two-machine, mixed Windows/Fedora field acceptance remains necessary before a
-stable collaboration release. See the validation report and tagged build results.
+Shared boards are included in IntelBoard 1.1.0. See the [validation report](COLLABORATION_VALIDATION.md) for test coverage and remaining field checks.
 
 ## Using it
 

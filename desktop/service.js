@@ -90,7 +90,10 @@ export function createService(dataDir) {
       const id = uuid.parse(board[1]);
       if (!store.get(id))
         throw Object.assign(new Error("Board not found"), { status: 404 });
-      if (board[2] && method === "POST") return store.duplicate(id);
+      if (board[2] && method === "POST") {
+        if (service.collaboration) return service.collaboration.copyBoard(id);
+        return store.duplicate(id);
+      }
       if (!board[2] && method === "GET") return store.get(id);
       if (!board[2] && method === "PUT")
         return store.save(id, boardSchema.parse(body));

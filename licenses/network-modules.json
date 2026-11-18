@@ -113,8 +113,8 @@
   },
   {
     "module": "github.com/klauspost/compress",
-    "version": "v1.20.0",
-    "sum": "h1:a3C1ke2ohxFymNlb2HWAHjDeKCI90scRskErZkR0ezA=",
+    "version": "v1.20.2",
+    "sum": "h1:v5tiZvm1KGLyg5d5oXdXe3lsSPrbEUiKoXGia//I7Qo=",
     "licenseFiles": [
       "LICENSE"
     ]
@@ -289,8 +289,8 @@
   },
   {
     "module": "golang.org/x/net",
-    "version": "v0.59.0",
-    "sum": "h1:5zfYln+w5XCxwrnMMJPufRgNoXEaGxl0wo5GqPXyues=",
+    "version": "v0.60.0",
+    "sum": "h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=",
     "licenseFiles": [
       "LICENSE"
     ]

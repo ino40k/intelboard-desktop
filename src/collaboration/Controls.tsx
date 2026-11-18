@@ -417,6 +417,25 @@ export function CollaborationControls({
                       <button
                         onClick={() =>
                           void act(async () => {
+                            if (fork.draft) {
+                              const draft = await collaboration(
+                                "recovery-draft",
+                                boardId,
+                                { id: fork.id },
+                              );
+                              const url = URL.createObjectURL(
+                                new Blob([JSON.stringify(draft)], {
+                                  type: "application/json",
+                                }),
+                              );
+                              const link = document.createElement("a");
+                              link.href = url;
+                              link.download =
+                                "intelboard-collaboration-draft.json";
+                              link.click();
+                              setTimeout(() => URL.revokeObjectURL(url), 1000);
+                              return;
+                            }
                             const result = await collaboration(
                               "restore-fork",
                               boardId,
@@ -430,7 +449,9 @@ export function CollaborationControls({
                           })
                         }
                       >
-                        Open private recovery copy
+                        {fork.draft
+                          ? "Download recovery draft"
+                          : "Open private recovery copy"}
                       </button>
                     </div>
                   ))}

@@ -760,7 +760,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ========================================================================
 
-github.com/klauspost/compress@v1.20.0
+github.com/klauspost/compress@v1.20.2
 
 LICENSE
 Copyright (c) 2012 The Go Authors. All rights reserved.
@@ -2229,7 +2229,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ========================================================================
 
-golang.org/x/net@v0.59.0
+golang.org/x/net@v0.60.0
 
 LICENSE
 Copyright 2009 The Go Authors.

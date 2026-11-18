@@ -26,6 +26,7 @@ export function openStore(dir) {
     CREATE TABLE IF NOT EXISTS collab_boards(board_id TEXT PRIMARY KEY REFERENCES boards(id) ON DELETE CASCADE,doc_id TEXT NOT NULL UNIQUE,genesis TEXT NOT NULL,state BLOB NOT NULL,sequence INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS collab_records(doc_id TEXT NOT NULL REFERENCES collab_boards(doc_id) ON DELETE CASCADE,id TEXT NOT NULL,kind TEXT NOT NULL,author TEXT NOT NULL,envelope TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(doc_id,id));
     CREATE INDEX IF NOT EXISTS collab_record_status ON collab_records(doc_id,status);
+    CREATE TABLE IF NOT EXISTS collab_checkpoints(doc_id TEXT PRIMARY KEY REFERENCES collab_boards(doc_id) ON DELETE CASCADE,proof TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS collab_recovery(id TEXT PRIMARY KEY,doc_id TEXT NOT NULL REFERENCES collab_boards(doc_id) ON DELETE CASCADE,created INTEGER NOT NULL,reason TEXT NOT NULL,board TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS collab_invites(id TEXT PRIMARY KEY,doc_id TEXT NOT NULL REFERENCES collab_boards(doc_id) ON DELETE CASCADE,token_hash TEXT NOT NULL,expires INTEGER NOT NULL,revoked INTEGER NOT NULL DEFAULT 0,subject TEXT,grant_id TEXT);
     CREATE TABLE IF NOT EXISTS collab_profiles(public_key TEXT PRIMARY KEY,record TEXT NOT NULL);
@@ -170,13 +171,12 @@ export function openStore(dir) {
         );
       return { revision: old.revision + 1, updated_at: now };
     });
-  const duplicate = (id) =>
+  const duplicate = (id, suffix = " — copy") =>
     transaction(() => {
       const original = get(id);
       if (!original) return null;
-      const copy = create((original.title + " — copy").slice(0, 200));
+      const copy = create((original.title + suffix).slice(0, 200));
       const ids = new Map(original.nodes.map((n) => [n.id, randomUUID()]));
-      // Inline the save transaction to keep duplication atomic without nested transactions.
       const groups = new Map(
         original.nodes
           .filter((n) => n.data.groupId)
@@ -190,37 +190,19 @@ export function openStore(dir) {
           ...(n.data.groupId ? { groupId: groups.get(n.data.groupId) } : {}),
         },
       }));
-      for (const n of nodes)
-        db.prepare("INSERT INTO elements VALUES(?,?,?)").run(
-          n.id,
-          copy.id,
-          JSON.stringify(n),
-        );
-      for (const e of original.edges) {
-        const edgeId = randomUUID();
-        db.prepare("INSERT INTO connections VALUES(?,?,?)").run(
-          edgeId,
-          copy.id,
-          JSON.stringify({
-            ...e,
-            id: edgeId,
-            source: ids.get(e.source),
-            target: ids.get(e.target),
-          }),
-        );
-      }
-      for (const r of db
-        .prepare("SELECT * FROM asset_refs WHERE board_id=?")
-        .all(id))
-        db.prepare("INSERT INTO asset_refs VALUES(?,?,?)").run(
-          copy.id,
-          ids.get(r.element_id),
-          r.asset_id,
-        );
-      db.prepare("UPDATE boards SET viewport=? WHERE id=?").run(
-        JSON.stringify(original.viewport),
-        copy.id,
-      );
+      const edges = original.edges.map((e) => ({
+        ...e,
+        id: randomUUID(),
+        source: ids.get(e.source),
+        target: ids.get(e.target),
+      }));
+      save(copy.id, {
+        ...original,
+        title: copy.title,
+        revision: 0,
+        nodes,
+        edges,
+      });
       return get(copy.id);
     });
   // Shared projections are derived from the durable CRDT journal. Only changed

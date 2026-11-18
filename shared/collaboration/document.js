@@ -1,13 +1,24 @@
 import * as Y from "yjs";
 import diff from "fast-diff";
 import { formatRuns } from "../format.js";
-import { boardSchema, nodeSchema, edgeSchema } from "../schema.js";
+import {
+  boardSchema,
+  nodeSchema,
+  edgeSchema,
+  BOARD_TITLE_LIMIT,
+} from "../schema.js";
 import { manifestSchema } from "./assets.js";
 
 export { Y };
 export const LOCAL = "intelboard-local-edit";
 export const REMOTE = "intelboard-remote-edit";
 export const TEXT_FIELDS = ["text", "title", "description", "caption"];
+const textLimits = {
+  text: 200000,
+  title: 4000,
+  description: 10000,
+  caption: 10000,
+};
 const observedClocks = new WeakMap();
 export function concurrentCreations(a, b) {
   if (!a || !b || a.initial || b.initial || a.actor === b.actor) return false;
@@ -44,21 +55,33 @@ export function unbase64(text, limit = 2 * 1024 * 1024) {
     throw new Error("Collaborative update exceeds its limit");
   return bytes;
 }
-export function textValue(text) {
-  let value = "",
-    format = [];
+function limitText(value, limit) {
+  const end = value.charCodeAt(limit - 1);
+  return value.slice(
+    0,
+    end >= 0xd800 && end <= 0xdbff && value.length > limit ? limit - 1 : limit,
+  );
+}
+
+export function textValue(text, limit = Infinity) {
+  let value = "";
+  const format = [];
   for (const span of text.toDelta()) {
     if (typeof span.insert !== "string")
       throw new Error("Unsupported collaborative text content");
+    if (value.length > limit) continue;
     const start = value.length;
-    value += span.insert;
+    // Read one additional code unit so the projection can keep pairs intact.
+    value += span.insert.slice(0, limit + 1 - start);
     const a = span.attributes || {};
     const style = (a.bold ? 1 : 0) | (a.italic ? 2 : 0) | (a.underline ? 4 : 0);
     if (style) format.push({ start, end: value.length, style });
   }
+  value = limitText(value, limit);
+  const runs = formatRuns(value, format).filter((run) => run.style);
   return {
     text: value,
-    format: formatRuns(value, format).filter((r) => r.style),
+    format: limit === Infinity ? runs : runs.slice(0, 10000),
   };
 }
 // Only the local edit's changed character spans are inserted/deleted. Yjs owns
@@ -185,7 +208,7 @@ export function readNode(id, entry) {
     const data = entry.get("data").toJSON(),
       formats = {};
     for (const field of TEXT_FIELDS) {
-      const value = textValue(entry.get("texts").get(field));
+      const value = textValue(entry.get("texts").get(field), textLimits[field]);
       if (value.text || (field === "text" && data.kind === "note"))
         data[field] = value.text;
       if (value.format.length) formats[field] = value.format;
@@ -196,7 +219,7 @@ export function readNode(id, entry) {
 }
 export function readEdge(id, entry) {
   return cachedValue(entry, () => {
-    const value = textValue(entry.get("label"));
+    const value = textValue(entry.get("label"), 1000);
     const edge = { id, ...entry.get("props").toJSON(), label: value.text };
     if (value.format.length)
       edge.data = { ...edge.data, labelFormat: value.format };
@@ -241,7 +264,13 @@ export function boardValue(doc, viewport = { x: 100, y: 100, zoom: 1 }) {
   }
   edges.sort(ordering("edges"));
   return {
-    title: doc.getText("title").toString() || "Untitled board",
+    // The signed text stays intact. Every replica projects the same bounded
+    // title even when independently valid edits produce a longer merge.
+    title:
+      limitText(
+        doc.getText("title").toString().trim(),
+        BOARD_TITLE_LIMIT,
+      ).trimEnd() || "Untitled board",
     revision: 0,
     viewport,
     nodes,

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+export const BOARD_TITLE_LIMIT = 200;
+export const CARD_DIMENSION_LIMIT = 20000;
 const id = z.string().uuid(),
   finite = z.number().finite();
 const format = z
@@ -68,12 +70,12 @@ const node = z.object({
   type: z.literal('research'),
   position: z.object({ x: finite, y: finite }),
   data,
-  width: finite.min(40).max(20000).optional(),
-  height: finite.min(30).max(20000).optional(),
+  width: finite.min(40).max(CARD_DIMENSION_LIMIT).optional(),
+  height: finite.min(30).max(CARD_DIMENSION_LIMIT).optional(),
   style: z
     .object({
-      width: finite.min(40).max(20000).optional(),
-      height: finite.min(30).max(20000).optional(),
+      width: finite.min(40).max(CARD_DIMENSION_LIMIT).optional(),
+      height: finite.min(30).max(CARD_DIMENSION_LIMIT).optional(),
     })
     .optional(),
   zIndex: finite.min(-10000).max(10000).optional(),
@@ -90,7 +92,7 @@ const edge = z.object({
 });
 const boardSchema = z
   .object({
-    title: z.string().trim().min(1).max(200),
+    title: z.string().trim().min(1).max(BOARD_TITLE_LIMIT),
     revision: z.number().int().nonnegative(),
     viewport: z.object({ x: finite, y: finite, zoom: finite.min(0.05).max(4) }),
     nodes: z.array(node).max(5000),

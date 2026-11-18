@@ -185,7 +185,7 @@ else {
               activeOperations--;
             }
           } catch (error) {
-            return { ok: false, error: error.message };
+            return { ok: false, error: error.message, code: error.code };
           }
         },
       );
@@ -197,7 +197,11 @@ else {
           collaboration.engine.local(boardId, body);
           event.returnValue = { ok: true };
         } catch (error) {
-          event.returnValue = { ok: false, error: error.message };
+          event.returnValue = {
+            ok: false,
+            error: error.message,
+            code: error.code,
+          };
         }
       });
       ipcMain.handle(

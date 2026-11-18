@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   signed,
@@ -9,7 +10,13 @@ import {
   publicId,
   validPublicKey,
 } from "./identity.js";
-import { membership, eligibleUpdates, validName } from "./membership.js";
+import {
+  membership,
+  membershipRecords,
+  eligibleUpdates,
+  dependencyOrder,
+  validName,
+} from "./membership.js";
 import {
   Y,
   createDocument,
@@ -22,6 +29,28 @@ import {
 } from "../../shared/collaboration/document.js";
 import { mergedLayout } from "../../shared/collaboration/layout.js";
 import { collaborationId } from "../../shared/collaboration/ids.js";
+
+const MAX_PENDING_MEMBERSHIP = 512;
+const CHECKPOINT_VERSION = 1;
+const MAX_CHECKPOINT_PROOF_BYTES = 16 * 1024 * 1024;
+function journalHash(records) {
+  const digest = createHash("sha256");
+  for (const record of records)
+    digest.update(JSON.stringify(record)).update("\n");
+  return digest.digest("hex");
+}
+function checkRecord(record, entry) {
+  const p = record?.payload;
+  if (
+    !p ||
+    p.docId !== entry.docId ||
+    !["update", "grant", "policy"].includes(p.kind) ||
+    !authentic(record)
+  )
+    throw new Error("Invalid signed synchronization record");
+  if (p.kind === "policy" && p.author !== entry.genesis.payload.author)
+    throw new Error("Only the owner may sign membership removals");
+}
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const updatePayload = z
@@ -223,7 +252,9 @@ export class CollaborationEngine extends EventEmitter {
   }
   records(docId) {
     return this.store.db
-      .prepare("SELECT envelope FROM collab_records WHERE doc_id=? ORDER BY id")
+      .prepare(
+        "SELECT envelope FROM collab_records WHERE doc_id=? ORDER BY rowid",
+      )
       .all(docId)
       .map((r) => JSON.parse(r.envelope));
   }
@@ -240,28 +271,93 @@ export class CollaborationEngine extends EventEmitter {
       sequence: row.sequence,
       session: randomUUID(),
     };
-    const rebuilt = this.rebuild(entry, this.records(entry.docId));
+    const records = this.records(entry.docId);
+    const checkpoint = this.readCheckpoint(entry, records, row.state);
+    const rebuilt = this.rebuild(entry, records, false, checkpoint);
     Object.assign(entry, rebuilt);
     this.documents.set(boardId, entry);
     return entry;
   }
-  rebuild(entry, records, strict = false) {
-    for (const record of records)
+  readCheckpoint(entry, records, state) {
+    const row = this.store.db
+      .prepare("SELECT proof FROM collab_checkpoints WHERE doc_id=?")
+      .get(entry.docId);
+    if (!row || row.proof.length > MAX_CHECKPOINT_PROOF_BYTES) return null;
+    try {
+      const proof = JSON.parse(row.proof),
+        p = proof.payload;
       if (
-        !authentic(record) ||
-        record.payload.docId !== entry.docId ||
-        !["grant", "policy", "update"].includes(record.payload.kind)
+        p.kind !== "checkpoint" ||
+        p.v !== CHECKPOINT_VERSION ||
+        p.author !== this.identity.publicKey ||
+        p.genesis !== entry.genesis.id ||
+        !Number.isSafeInteger(p.count) ||
+        p.count < 0 ||
+        p.count > records.length ||
+        !authentic(proof) ||
+        p.state !== hash(Buffer.from(state)) ||
+        p.journal !== journalHash(records.slice(0, p.count))
       )
-        throw new Error(
-          "The collaboration journal contains an invalid signed record",
-        );
+        return null;
+      return {
+        count: p.count,
+        vectors: new Map(
+          p.vectors.map(([id, vector]) => [id, new Map(vector)]),
+        ),
+        state,
+      };
+    } catch {
+      return null;
+    }
+  }
+  writeCheckpoint(entry, state) {
+    // Checkpoints only cover completely resolved histories. The signed proof
+    // binds both the snapshot and every journal envelope it replaces in replay.
+    if (entry.eligibility.quarantined.length) return false;
+    const proof = JSON.stringify(
+      signed(this.identity, {
+        kind: "checkpoint",
+        v: CHECKPOINT_VERSION,
+        genesis: entry.genesis.id,
+        count: entry.records.length,
+        state: hash(Buffer.from(state)),
+        journal: journalHash(entry.records),
+        vectors: [...entry.vectors].map(([id, vector]) => [id, [...vector]]),
+      }),
+    );
+    if (proof.length > MAX_CHECKPOINT_PROOF_BYTES) return false;
+    this.store.db
+      .prepare(
+        "INSERT INTO collab_checkpoints VALUES(?,?) ON CONFLICT(doc_id) DO UPDATE SET proof=excluded.proof",
+      )
+      .run(entry.docId, proof);
+    return true;
+  }
+  rebuild(entry, records, strict = false, checkpoint = null) {
+    const tail = checkpoint ? records.slice(checkpoint.count) : records;
+    for (const record of tail) checkRecord(record, entry);
     const members = membership(entry.genesis, records);
     const updates = records.filter((r) => r.payload.kind === "update");
     const eligibility = eligibleUpdates(members, updates);
     let doc = createDocument();
-    const vectors = new Map(),
+    const vectors = checkpoint?.vectors || new Map(),
       accepted = new Map();
+    if (checkpoint) {
+      if ([...vectors.keys()].some((id) => !eligibility.allowed.has(id))) {
+        doc.destroy();
+        return this.rebuild(entry, records);
+      }
+      try {
+        Y.applyUpdate(doc, checkpoint.state);
+        for (const id of vectors.keys())
+          accepted.set(id, eligibility.allowed.get(id));
+      } catch {
+        doc.destroy();
+        return this.rebuild(entry, records);
+      }
+    }
     for (const record of eligibility.allowed.values()) {
+      if (accepted.has(record.id)) continue;
       if (record.payload.parents.some((id) => !accepted.has(id))) continue;
       try {
         const info = decoded(record),
@@ -272,16 +368,19 @@ export class CollaborationEngine extends EventEmitter {
         accepted.set(record.id, record);
       } catch (error) {
         doc.destroy();
+        if (checkpoint) return this.rebuild(entry, records);
         if (!strict) return this.rebuild(entry, records, true);
         doc = createDocument();
         for (const prior of accepted.values())
           Y.applyUpdate(doc, unbase64(prior.payload.data));
       }
     }
+    let value;
     try {
-      validateDocument(doc);
+      value = validateDocument(doc);
     } catch (error) {
       doc.destroy();
+      if (checkpoint) return this.rebuild(entry, records);
       if (!strict) return this.rebuild(entry, records, true);
       throw error;
     }
@@ -292,7 +391,17 @@ export class CollaborationEngine extends EventEmitter {
     const heads = new Set(eligibility.allowed.keys());
     for (const record of eligibility.allowed.values())
       for (const parent of record.payload.parents) heads.delete(parent);
-    return { doc, records, members, eligibility, vectors, heads };
+    return {
+      doc,
+      value,
+      records,
+      members,
+      eligibility,
+      vectors,
+      heads,
+      inventoryEpoch: randomUUID(),
+      replayRequired: strict,
+    };
   }
   share(boardId, initialBoard = this.store.get(boardId)) {
     if (this.get(boardId)) return this.open(boardId);
@@ -378,7 +487,7 @@ export class CollaborationEngine extends EventEmitter {
           entry.sequence,
         );
       for (const record of pending) this.insert(entry, record, "accepted");
-      this.project(entry);
+      this.project(entry, true);
     });
     this.documents.set(boardId, entry);
     this.store.afterRollback(() => {
@@ -402,20 +511,25 @@ export class CollaborationEngine extends EventEmitter {
         status,
       );
   }
-  project(entry) {
-    const board = boardValue(
-      entry.doc,
-      JSON.parse(
+  project(entry, checkpoint = false) {
+    const board = {
+      ...entry.value,
+      viewport: JSON.parse(
         this.store.db
           .prepare("SELECT viewport FROM boards WHERE id=?")
           .get(entry.boardId).viewport,
       ),
-    );
+    };
     board.nodes = mergedLayout(entry.doc, board.nodes).nodes;
+    const state =
+      !entry.eligibility.quarantined.length &&
+      (checkpoint || entry.records.length % 64 === 0)
+        ? Y.encodeStateAsUpdate(entry.doc)
+        : null;
     this.store.projectShared(
       entry.boardId,
       board,
-      entry.records.length % 64 === 0 ? Y.encodeStateAsUpdate(entry.doc) : null,
+      state && this.writeCheckpoint(entry, state) ? state : null,
     );
   }
   open(boardId) {
@@ -467,34 +581,102 @@ export class CollaborationEngine extends EventEmitter {
         r.payload.writerSequence >= end,
     );
   }
+  authenticateMembership(entry, incoming, author, source) {
+    // Evaluate only the proposed proof and trusted history. Pending records
+    // cannot help a peer authorize itself and a failed proof has no writes.
+    const combined = new Map(
+      membershipRecords(entry.members).map((record) => [record.id, record]),
+    );
+    for (const record of incoming) {
+      checkRecord(record, entry);
+      combined.set(record.id, record);
+    }
+    const candidate = membership(entry.genesis, [...combined.values()]);
+    if (!candidate.members.has(author)) return false;
+    const admitted = new Set(
+      membershipRecords(candidate).map((record) => record.id),
+    );
+    this.ingestRecords(
+      entry,
+      incoming.filter((record) => admitted.has(record.id)),
+      source,
+      {
+        stageMembership: false,
+      },
+    );
+    return true;
+  }
+
   ingest(boardId, incoming, source = null) {
     const entry = this.get(boardId);
     if (!entry) throw new Error("Shared board not found");
     if (!Array.isArray(incoming) || incoming.length > 128)
       throw new Error("Too many synchronization records");
+    return this.ingestRecords(entry, incoming, source);
+  }
+
+  ingestRecords(
+    entry,
+    incoming,
+    source,
+    { stageMembership = true, requireAccepted = false } = {},
+  ) {
+    const { boardId } = entry;
     const byId = new Map(entry.records.map((r) => [r.id, r]));
     const added = [];
+    const candidates = new Map(stageMembership ? entry.pendingMembership : []);
+    let hasMembership = false;
+    const add = (record) => {
+      if (byId.has(record.id)) return;
+      byId.set(record.id, record);
+      added.push(record);
+    };
     for (const record of incoming) {
-      if (
-        JSON.stringify(record).length > 4 * 1024 * 1024 ||
-        !authentic(record) ||
-        record.payload.docId !== entry.docId ||
-        !["update", "grant", "policy"].includes(record.payload.kind)
-      )
-        throw new Error("Invalid signed synchronization record");
-      if (
-        record.payload.kind === "policy" &&
-        record.payload.author !== entry.genesis.payload.author
-      )
-        throw new Error("Only the owner may sign membership removals");
-      if (record.payload.kind === "update") decoded(record);
-      if (!byId.has(record.id)) {
-        byId.set(record.id, record);
-        added.push(record);
+      checkRecord(record, entry);
+      const limit = { update: 4 * 1024 * 1024, policy: 65536, grant: 2048 }[
+        record.payload.kind
+      ];
+      if (JSON.stringify(record).length > limit) {
+        const error = new Error(
+          "Synchronization record exceeds its size limit",
+        );
+        if (requireAccepted) error.code = "COLLAB_EDIT_REJECTED";
+        throw error;
+      }
+      if (byId.has(record.id)) continue;
+      if (record.payload.kind === "update") {
+        try {
+          decoded(record);
+        } catch (error) {
+          if (requireAccepted) error.code = "COLLAB_EDIT_REJECTED";
+          throw error;
+        }
+        add(record);
+      } else {
+        candidates.set(record.id, record);
+        hasMembership = true;
       }
     }
-    if (!added.length)
+    let pendingMembership;
+    if (hasMembership) {
+      const members = membership(entry.genesis, [
+        ...membershipRecords(entry.members),
+        ...candidates.values(),
+      ]);
+      for (const record of membershipRecords(members)) {
+        add(record);
+        candidates.delete(record.id);
+      }
+      if (stageMembership)
+        // Retain a small volatile buffer for proofs received before their parents.
+        pendingMembership = new Map(
+          [...candidates].slice(-MAX_PENDING_MEMBERSHIP),
+        );
+    }
+    if (!added.length) {
+      if (pendingMembership) entry.pendingMembership = pendingMembership;
       return { accepted: [], pending: entry.eligibility.quarantined.length };
+    }
     let rebuilt;
     const ids = new Set(added.map((r) => r.id));
     const unblocks = entry.eligibility.quarantined.some((r) =>
@@ -502,6 +684,7 @@ export class CollaborationEngine extends EventEmitter {
     );
     if (
       !unblocks &&
+      !entry.replayRequired &&
       !hasEquivocation(byId.values()) &&
       added.every(
         (r) =>
@@ -523,41 +706,66 @@ export class CollaborationEngine extends EventEmitter {
         doc.destroy();
         entry.doc = this.rebuild(entry, entry.records).doc;
       };
-      const remaining = [...added];
-      let progress = true;
+      const ordered = dependencyOrder(added, allowed);
       try {
-        while (progress && remaining.length) {
-          progress = false;
-          for (let i = remaining.length - 1; i >= 0; i--) {
-            const record = remaining[i];
-            if (record.payload.parents.some((id) => !allowed.has(id))) continue;
-            const info = decoded(record);
-            vectors.set(record.id, vectorAfter(record, info, vectors, byId));
-            applyChecked(doc, info, entry.genesis);
-            allowed.set(record.id, record);
-            heads.add(record.id);
-            for (const id of record.payload.parents) heads.delete(id);
-            remaining.splice(i, 1);
-            progress = true;
-          }
+        for (const record of ordered) {
+          const info = decoded(record);
+          vectors.set(record.id, vectorAfter(record, info, vectors, byId));
+          applyChecked(doc, info, entry.genesis);
+          allowed.set(record.id, record);
+          heads.add(record.id);
+          for (const id of record.payload.parents) heads.delete(id);
         }
-        if (!remaining.length) {
-          validateDocument(doc);
+      } catch (error) {
+        restore();
+        if (requireAccepted) error.code = "COLLAB_EDIT_REJECTED";
+        throw error;
+      }
+      if (ordered.length === added.length) {
+        try {
+          const value = validateDocument(doc);
           rebuilt = {
             doc,
+            value,
             members: entry.members,
             records: [...entry.records, ...added],
             eligibility: { ...entry.eligibility, allowed },
             vectors,
             heads,
+            inventoryEpoch: entry.inventoryEpoch,
+            replayRequired: false,
           };
-        } else restore();
+        } catch (error) {
+          restore();
+          if (requireAccepted) {
+            error.code = "COLLAB_EDIT_REJECTED";
+            throw error;
+          }
+          // Valid branches can collectively exceed a structural limit. Replay
+          // both histories in the same causal order before deciding eligibility.
+        }
+      } else restore();
+    }
+    if (!rebuilt) {
+      try {
+        rebuilt = this.rebuild(entry, [...byId.values()]);
       } catch (error) {
-        restore();
+        if (requireAccepted) error.code = "COLLAB_EDIT_REJECTED";
         throw error;
       }
     }
-    if (!rebuilt) rebuilt = this.rebuild(entry, [...byId.values()]);
+    if (
+      requireAccepted &&
+      added.some((record) => !rebuilt.eligibility.allowed.has(record.id))
+    ) {
+      if (rebuilt.doc !== entry.doc) rebuilt.doc.destroy();
+      throw Object.assign(
+        new Error("This edit could not be reconciled with the current board."),
+        {
+          code: "COLLAB_EDIT_REJECTED",
+        },
+      );
+    }
     const previousAllowed = new Set(entry.eligibility.allowed.keys());
     const removed = [...previousAllowed].some(
       (id) => !rebuilt.eligibility.allowed.has(id),
@@ -573,7 +781,9 @@ export class CollaborationEngine extends EventEmitter {
               randomUUID(),
               entry.docId,
               Date.now(),
-              "Membership change quarantined an unacknowledged fork",
+              rebuilt.members.policy.id !== entry.members.policy.id
+                ? "Membership change quarantined an unacknowledged fork"
+                : "Journal reconciliation quarantined an edit",
               JSON.stringify(prior),
             );
           this.store.db
@@ -619,6 +829,7 @@ export class CollaborationEngine extends EventEmitter {
     this.store.afterCommit(() => {
       if (entry.doc !== rebuilt.doc) entry.doc.destroy();
       Object.assign(entry, rebuilt);
+      if (pendingMembership) entry.pendingMembership = pendingMembership;
       this.emit("changed", {
         type: removed ? "reset" : "update",
         boardId,
@@ -656,7 +867,16 @@ export class CollaborationEngine extends EventEmitter {
         r.payload.session === message.session &&
         r.payload.data === message.data,
     );
-    if (duplicate) return { id: duplicate.id };
+    if (duplicate) {
+      if (entry.eligibility.allowed.has(duplicate.id))
+        return { id: duplicate.id };
+      throw Object.assign(
+        new Error("This edit is quarantined in the journal."),
+        {
+          code: "COLLAB_EDIT_REJECTED",
+        },
+      );
+    }
     const sequence =
       Math.max(
         entry.sequence,
@@ -691,7 +911,7 @@ export class CollaborationEngine extends EventEmitter {
       before: message.before,
       data: message.data,
     });
-    this.ingest(boardId, [record]);
+    this.ingestRecords(entry, [record], null, { requireAccepted: true });
     entry.sequence = sequence;
     this.store.db
       .prepare("UPDATE collab_boards SET sequence=? WHERE board_id=?")
@@ -729,6 +949,8 @@ export class CollaborationEngine extends EventEmitter {
       entry.members.revoked.has(publicId(subject))
     )
       throw new Error("Invalid collaborator invitation");
+    const existing = entry.members.members.get(subject);
+    if (existing) return entry.members.grants.get(existing.id);
     const record = signed(this.identity, {
       v: 1,
       kind: "grant",
@@ -741,48 +963,82 @@ export class CollaborationEngine extends EventEmitter {
     this.ingest(boardId, [record]);
     return record;
   }
-  accept(genesis, records) {
-    if (
-      !Array.isArray(records) ||
-      records.length > 1000000 ||
-      records.some(
-        (r) =>
-          !authentic(r) ||
-          r.payload.docId !== genesis.payload.docId ||
-          !["grant", "policy", "update"].includes(r.payload.kind),
-      )
-    )
+  accept(genesis, records, peer) {
+    if (!Array.isArray(records) || records.length > 1000000)
       throw new Error("Invalid initial collaboration records");
+    const docId = genesis?.payload?.docId;
     const existing = this.store.db
       .prepare("SELECT board_id FROM collab_boards WHERE doc_id=?")
-      .get(genesis.payload.docId);
-    if (existing) {
-      this.ingest(existing.board_id, records);
-      return existing.board_id;
-    }
-    const state = membership(genesis, records);
-    if (!state.members.has(this.identity.publicKey))
+      .get(docId ?? null);
+    const current = existing ? this.get(existing.board_id) : null;
+    if (current && current.genesis.id !== genesis.id)
+      throw new Error("Board ownership proof differs");
+    const entry = current || {
+      docId,
+      genesis,
+      sequence: 0,
+      session: randomUUID(),
+    };
+    const byId = new Map(
+      (current?.records || []).map((record) => [record.id, record]),
+    );
+    for (let offset = 0; offset < records.length; offset += 128)
+      for (const record of records.slice(offset, offset + 128)) {
+        checkRecord(record, entry);
+        byId.set(record.id, record);
+      }
+    const state = membership(entry.genesis, [...byId.values()]);
+    if (
+      !state.members.has(this.identity.publicKey) ||
+      (peer && !state.members.has(peer))
+    )
       throw new Error("This invitation did not grant you access");
-    let boardId;
-    this.store.transaction(() => {
-      const board = this.store.create("Joining shared board");
-      boardId = board.id;
-      this.store.db
-        .prepare(
-          "INSERT INTO collab_boards(board_id,doc_id,genesis,state) VALUES(?,?,?,?)",
-        )
-        .run(
-          boardId,
-          state.docId,
-          JSON.stringify(genesis),
-          Y.encodeStateAsUpdate(createDocument()),
-        );
-      for (const record of records.filter((r) => r.payload.kind !== "update"))
-        this.insert({ docId: state.docId }, record, "accepted");
+    const admitted = new Set(
+      membershipRecords(state).map((record) => record.id),
+    );
+    const verified = [...byId.values()].filter(
+      (record) => record.payload.kind === "update" || admitted.has(record.id),
+    );
+    if (current) {
+      this.ingestRecords(current, verified, null, { stageMembership: false });
+      return current.boardId;
+    }
+    const rebuilt = this.rebuild(entry, verified);
+    try {
+      this.store.transaction(() => {
+        entry.boardId = this.store.create("Joining shared board").id;
+        Object.assign(entry, rebuilt);
+        this.store.db
+          .prepare(
+            "INSERT INTO collab_boards(board_id,doc_id,genesis,state) VALUES(?,?,?,?)",
+          )
+          .run(
+            entry.boardId,
+            docId,
+            JSON.stringify(genesis),
+            Y.encodeStateAsUpdate(entry.doc),
+          );
+        for (const record of verified)
+          this.insert(
+            entry,
+            record,
+            record.payload.kind !== "update" ||
+              rebuilt.eligibility.allowed.has(record.id)
+              ? "accepted"
+              : "pending",
+          );
+        this.project(entry, true);
+      });
+    } catch (error) {
+      rebuilt.doc.destroy();
+      throw error;
+    }
+    this.documents.set(entry.boardId, entry);
+    this.store.afterRollback(() => {
+      this.documents.delete(entry.boardId);
+      entry.doc.destroy();
     });
-    this.get(boardId);
-    this.ingest(boardId, records);
-    return boardId;
+    return entry.boardId;
   }
   revoke(boardId, identity) {
     const entry = this.get(boardId);

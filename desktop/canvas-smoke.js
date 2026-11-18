@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Menu } from "electron";
+import sharp from "sharp";
 
 export async function runSmoke(window, service, dir) {
   const js = async (code) => {
@@ -537,6 +538,74 @@ export async function runSmoke(window, service, dir) {
   console.log(
     "canvas: snapping, transient guides, persistence/Undo/Redo, group/multi-selection and region followers passed",
   );
+  const attachmentBoard = await load([card(0, 0)]);
+  if (process.env.INTELBOARD_CANVAS_SHARED) {
+    const title = "Saved title after a blank draft";
+    await js(`(() => {
+      const input = document.querySelector('.board-name');
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      input.focus();
+      for (const value of ['   ', ${JSON.stringify(title)}]) {
+        set.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      input.blur();
+    })()`);
+    await saved(() => service.store.get(attachmentBoard.id).title === title);
+  }
+
+  const image = await sharp({
+    create: { width: 32, height: 3000, channels: 3, background: "#455879" },
+  })
+    .png()
+    .toBuffer();
+  const manager = service.collaboration,
+    handle = manager.handle;
+  let finishManifest;
+  const manifestGate = new Promise((resolve) => {
+    finishManifest = resolve;
+  });
+  manager.handle = async function (operation, id, body) {
+    if (operation === "asset" && id === attachmentBoard.id) await manifestGate;
+    return handle.call(this, operation, id, body);
+  };
+  try {
+    await js(`(() => {
+      const input = document.querySelector('input[type=file]');
+      const data = new DataTransfer();
+      data.items.add(new File([Uint8Array.from(atob(${JSON.stringify(image.toString("base64"))}), c => c.charCodeAt(0))], 'tall.png', { type: 'image/png' }));
+      input.files = data.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    if (process.env.INTELBOARD_CANVAS_SHARED) {
+      await saved(
+        () => service.store.get(attachmentBoard.id).nodes.length === 2,
+      );
+      await js(`document.querySelector('[aria-label="All boards"]').click()`);
+      await wait(
+        `document.body.innerText.includes('pending saves to finish before leaving')`,
+      );
+    }
+  } finally {
+    finishManifest();
+    manager.handle = handle;
+  }
+  await saved(() =>
+    service.store.get(attachmentBoard.id).nodes.some((n) => n.data.assetId),
+  );
+  const uploaded = service.store
+    .get(attachmentBoard.id)
+    .nodes.find((n) => n.data.assetId);
+  assert.ok(uploaded.style.height <= 20000);
+  assert.equal(uploaded.data.originalWidth, 32);
+  assert.equal(uploaded.data.originalHeight, 3000);
+  const asset = service.assets.get(uploaded.data.assetId);
+  assert.equal(asset.size, image.length);
+  if (process.env.INTELBOARD_CANVAS_SHARED)
+    assert.ok(
+      manager.engine.get(attachmentBoard.id).doc.getMap("assets").has(asset.id),
+    );
+
   await writeFile(
     path.join(dir, "result.json"),
     JSON.stringify(
@@ -547,6 +616,7 @@ export async function runSmoke(window, service, dir) {
         handles: true,
         snapping: true,
         formations: true,
+        tallAttachment: true,
       },
       null,
       2,

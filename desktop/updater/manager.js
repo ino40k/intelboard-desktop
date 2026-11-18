@@ -157,7 +157,12 @@ export class UpdateManager extends EventEmitter {
       !/^[a-f0-9]{64}$/.test(id)
     )
       throw Error("Invalid update selection");
-    if (this.beginning || this.job || active.has(this.state.phase))
+    if (
+      this.beginning ||
+      this.job ||
+      this.installing ||
+      active.has(this.state.phase)
+    )
       throw Error("An update is already in progress");
     const candidate = this.selected[channel];
     if (
@@ -305,23 +310,40 @@ export class UpdateManager extends EventEmitter {
     this.cancelled = true;
     clearTimeout(this.retryTimer);
     this.cancellation?.cancel();
-    if (!this.job) {
-      fs.rmSync(this.journal, { force: true });
-      this.ready = null;
-      this.authorized = null;
-      this.publish({
-        phase: "idle",
-        progress: null,
-        error: "",
-        message: "Update cancelled.",
-      });
-    }
+    if (!this.job && !this.installing) this.cancelReady();
   }
-  async install() {
-    if (!this.ready || this.cancelled || this.closed) return;
+  install() {
+    if (this.installing) return this.installing;
+    clearTimeout(this.retryTimer);
+    this.installing = Promise.resolve()
+      .then(() => this.installReady())
+      .catch((error) => {
+        this.fail(error);
+        throw error;
+      })
+      .finally(() => {
+        this.installing = null;
+      });
+    return this.installing;
+  }
+  async installReady() {
+    if (this.cancelled) {
+      if (this.ready) this.cancelReady();
+      return;
+    }
+    if (!this.ready || this.closed) return;
     const { candidate, file } = this.ready;
     this.verifyFile(file, candidate.manifest);
-    await this.discovery.validate?.(candidate);
+    try {
+      await this.discovery.validate?.(candidate);
+    } catch (error) {
+      if (!this.cancelled) throw error;
+    }
+    if (this.cancelled) {
+      this.cancelReady();
+      return;
+    }
+    if (this.closed) return;
     this.publish({
       phase: "preparing",
       error: "",
@@ -332,20 +354,12 @@ export class UpdateManager extends EventEmitter {
     } catch (error) {
       await this.releasePreparation?.();
       if (this.cancelled) {
-        this.ready = null;
-        this.authorized = null;
-        fs.rmSync(this.journal, { force: true });
-        this.publish({
-          phase: "idle",
-          error: "",
-          message: "Update cancelled.",
-          progress: null,
-        });
+        this.cancelReady();
         return;
       }
       this.publish({ phase: "waiting", message: error.message, error: "" });
       this.retryTimer = setTimeout(
-        () => void this.install().catch((e) => this.fail(e)),
+        () => void this.install().catch(() => {}),
         10000,
       );
       this.retryTimer.unref?.();
@@ -353,28 +367,32 @@ export class UpdateManager extends EventEmitter {
     }
     if (this.cancelled) {
       await this.releasePreparation?.();
-      this.ready = null;
-      this.authorized = null;
-      fs.rmSync(this.journal, { force: true });
-      this.publish({
-        phase: "idle",
-        progress: null,
-        error: "",
-        message: "Update cancelled.",
-      });
+      this.cancelReady();
       return;
     }
     this.publish({ phase: "installing", message: "Restarting IntelBoard…" });
     try {
       this.verifyFile(file, candidate.manifest);
       await this.apply({ file, manifest: candidate.manifest });
+      this.ready = null;
     } catch (error) {
       await this.releasePreparation?.();
-      this.fail(error);
       throw error;
     }
   }
+  cancelReady() {
+    this.ready = null;
+    this.authorized = null;
+    fs.rmSync(this.journal, { force: true });
+    this.publish({
+      phase: "idle",
+      progress: null,
+      error: "",
+      message: "Update cancelled.",
+    });
+  }
   async retry() {
+    if (this.installing) return this.installing;
     if (
       this.job ||
       this.beginning ||
@@ -387,8 +405,22 @@ export class UpdateManager extends EventEmitter {
       return this.install();
     }
     if (this.authorized) {
-      const fresh = await this.discovery.check(),
-        channel = this.authorized.manifest.channel;
+      const candidate = this.authorized;
+      this.beginning = true;
+      this.cancelled = false;
+      let fresh;
+      try {
+        fresh = await this.discovery.check();
+      } catch (error) {
+        if (!this.cancelled) throw error;
+      } finally {
+        this.beginning = false;
+      }
+      if (this.cancelled) {
+        this.cancelReady();
+        return;
+      }
+      const channel = candidate.manifest.channel;
       if (
         !fresh[channel] ||
         digest(fresh[channel].envelope) !== digest(this.authorized.envelope)

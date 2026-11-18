@@ -1,5 +1,6 @@
 import { UpdateControls } from "./UpdateControls";
 import { registerUpdateBarrier, isUpdatePreparing } from "./updateSafety";
+import { BOARD_TITLE_LIMIT, CARD_DIMENSION_LIMIT } from "../shared/schema.js";
 import { documentFormat } from "../shared/document.js";
 import {
   connectionHandleScale,
@@ -199,6 +200,7 @@ export default function Canvas({
     },
     [board.shared],
   );
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const setTitle = useCallback<React.Dispatch<React.SetStateAction<string>>>(
     (value) => {
       if (board.shared) shared.ref.current?.setTitle(value);
@@ -236,7 +238,8 @@ export default function Canvas({
     future = useRef<(typeof emptySnapshot)[]>([]),
     clipboard = useRef<typeof emptySnapshot | null>(null),
     drag = useRef<ReturnType<typeof createAlignmentSession> | null>(null),
-    titleFocus = useRef(title);
+    titleFocus = useRef(title),
+    activeImports = useRef(0);
   state.current = { nodes, edges };
   const { canvasRef, rightNavigating } = useCanvasNavigation(flow, (point) => {
     pointer.current = point;
@@ -264,6 +267,13 @@ export default function Canvas({
     () => {},
     !board.shared,
   );
+  useEffect(() => {
+    const exit = (event: BeforeUnloadEvent) => {
+      if (activeImports.current) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", exit);
+    return () => window.removeEventListener("beforeunload", exit);
+  }, []);
   const status = board.shared
     ? shared.controller?.error
       ? "error"
@@ -284,6 +294,8 @@ export default function Canvas({
     board.shared
       ? !shared.ready ||
         !!shared.controller?.outbox.length ||
+        !!shared.controller?.resetting ||
+        activeImports.current > 0 ||
         nodes.some((n) => n.data.loading)
       : privatePersistence.hasUnsaved();
   const updateBarrier = useRef<() => Promise<void>>(async () => {});
@@ -291,6 +303,7 @@ export default function Canvas({
     if (
       manipulating ||
       rightNavigating ||
+      activeImports.current > 0 ||
       nodes.some((n) => n.data.loading) ||
       shared.controller?.composing
     )
@@ -302,7 +315,7 @@ export default function Canvas({
         throw Error("Wait for the shared board to finish opening.");
       await shared.controller!.flush();
       shared.controller!.flushSync();
-      if (shared.controller!.outbox.length)
+      if (shared.controller!.outbox.length || shared.controller!.resetting)
         throw Error("Local shared-board changes have not finished saving.");
       await collaboration("viewport", board.id, viewport);
     } else await privatePersistence.flushForUpdate();
@@ -408,14 +421,29 @@ export default function Canvas({
     },
     [checkpoint, point],
   );
+  const shareAttachment = useCallback(
+    async (id: string) => {
+      if (!board.shared) return id;
+      const manifest = await collaboration<{ id: string }>("asset", board.id, {
+        id,
+      });
+      return manifest.id;
+    },
+    [board.id, board.shared],
+  );
   const capture = useCallback(
     async (id: string, url: string) => {
+      activeImports.current++;
       update(id, { loading: true });
       try {
         const metadata = await api<Partial<ItemData>>("/metadata", {
           method: "POST",
           body: JSON.stringify({ url }),
         });
+        for (const key of ["assetId", "thumbnailId", "faviconId"] as const) {
+          const asset = metadata[key];
+          if (asset) metadata[key] = await shareAttachment(asset);
+        }
         setNodes((ns) =>
           ns.map((n) =>
             n.id === id
@@ -453,9 +481,11 @@ export default function Canvas({
       } catch (e) {
         update(id, { loading: false, captureStatus: (e as Error).message });
         notify("Link saved. Source preview could not be captured.");
+      } finally {
+        activeImports.current--;
       }
     },
-    [update, notify],
+    [update, notify, setNodes, shareAttachment],
   );
   const addLink = useCallback(
     (raw: string, at?: { x: number; y: number }) => {
@@ -529,56 +559,66 @@ export default function Canvas({
         ...ns.map((n) => ({ ...n, selected: false })),
         ...queued.map((q) => ({ ...q.n, selected: true })),
       ]);
-      for (const { file, n } of queued) {
-        try {
-          const form = new FormData();
-          form.append("file", file);
-          const a = await api<Asset>("/assets", { method: "POST", body: form });
-          setNodes((ns) =>
-            ns.map((item) =>
-              item.id === n.id
-                ? {
-                    ...item,
-                    style: a.thumbnail
-                      ? {
-                          width: 320,
-                          height:
-                            Math.max(
-                              120,
-                              Math.round(
-                                (320 * (a.height || 240)) / (a.width || 320),
-                              ),
-                            ) + 34,
-                        }
-                      : item.style,
-                    data: {
-                      ...item.data,
-                      kind: a.thumbnail ? "image" : "file",
-                      assetId: a.id,
-                      mime: a.mime,
-                      filename: a.filename,
-                      size: a.size,
-                      originalWidth: a.width ?? undefined,
-                      originalHeight: a.height ?? undefined,
-                      preview: a.preview ?? undefined,
-                      loading: false,
-                      localUrl: undefined,
-                    },
-                  }
-                : item,
-            ),
-          );
-          if (n.data.localUrl) URL.revokeObjectURL(n.data.localUrl);
-        } catch (e) {
-          update(n.id, {
-            loading: false,
-            uploadError: "Upload failed. Drop the file again to retry.",
-          });
-          notify((e as Error).message);
+      activeImports.current++;
+      try {
+        for (const { file, n } of queued) {
+          try {
+            const form = new FormData();
+            form.append("file", file);
+            const a = await api<Asset>("/assets", {
+              method: "POST",
+              body: form,
+            });
+            const assetId = await shareAttachment(a.id);
+            const aspect = (a.width || 320) / (a.height || 240);
+            const imageWidth = Math.min(
+              320,
+              (CARD_DIMENSION_LIMIT - 34) * aspect,
+            );
+            const imageHeight = Math.round(imageWidth / aspect);
+            setNodes((ns) =>
+              ns.map((item) =>
+                item.id === n.id
+                  ? {
+                      ...item,
+                      style: a.thumbnail
+                        ? {
+                            width: Math.max(40, Math.round(imageWidth)),
+                            height: Math.max(120, imageHeight + 34),
+                          }
+                        : item.style,
+                      data: {
+                        ...item.data,
+                        kind: a.thumbnail ? "image" : "file",
+                        assetId,
+                        mime: a.mime,
+                        filename: a.filename,
+                        size: a.size,
+                        originalWidth: a.width ?? undefined,
+                        originalHeight: a.height ?? undefined,
+                        preview: a.preview ?? undefined,
+                        loading: false,
+                        localUrl: undefined,
+                      },
+                    }
+                  : item,
+              ),
+            );
+          } catch (e) {
+            update(n.id, {
+              loading: false,
+              uploadError: "Upload failed. Drop the file again to retry.",
+            });
+            notify((e as Error).message);
+          } finally {
+            if (n.data.localUrl) URL.revokeObjectURL(n.data.localUrl);
+          }
         }
+      } finally {
+        activeImports.current--;
       }
     },
-    [checkpoint, maxUploadMB, notify, update],
+    [checkpoint, maxUploadMB, notify, update, setNodes, shareAttachment],
   );
   const remove = useCallback(() => {
     checkpoint();
@@ -1005,14 +1045,21 @@ export default function Canvas({
             <input
               className="board-name"
               aria-label="Board title"
-              value={title}
+              value={titleDraft ?? title}
               onFocus={() => {
                 titleFocus.current = title;
               }}
-              maxLength={200}
-              onChange={(e) => setTitle(e.target.value)}
+              maxLength={BOARD_TITLE_LIMIT}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (board.shared) {
+                  setTitleDraft(value);
+                  if (value.trim()) setTitle(value);
+                } else setTitle(value);
+              }}
               onBlur={() => {
-                if (!title.trim())
+                if (board.shared) setTitleDraft(null);
+                else if (!title.trim())
                   setTitle(titleFocus.current || "Untitled board");
               }}
               onKeyDown={(e) => {

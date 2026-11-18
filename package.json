@@ -1,6 +1,6 @@
 {
   "name": "intelboard-desktop",
-  "version": "1.1.0-dev.6",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -61,7 +61,8 @@
     "node": ">=22.18.0"
   },
   "overrides": {
-    "@xmldom/xmldom": "^0.8.15"
+    "@xmldom/xmldom": "^0.8.15",
+    "minimatch@>=7.0.0 <11.0.1": "11.0.1"
   },
   "description": "A private, standalone visual research workspace",
   "author": "IntelBoard contributors",

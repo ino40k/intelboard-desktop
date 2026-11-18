@@ -228,3 +228,29 @@ test("recovered verified cache requires retry and is revalidated instead of blin
   await x.resume();
   assert.match(x.state.error, /cached/);
 });
+
+test("overlapping retries share release validation and installation", async (t) => {
+  const { manager: m, f, counts } = setup(t);
+  const original = m.prepare;
+  m.prepare = async () => {
+    throw Error("Workspace is busy");
+  };
+  await m.check();
+  await m.begin("stable", digest(f.envelope));
+  await m.job;
+  assert.equal(m.state.phase, "waiting");
+  m.prepare = original;
+  let validations = 0;
+  let unblock;
+  const validation = new Promise((resolve) => {
+    unblock = resolve;
+  });
+  m.discovery.validate = async () => {
+    validations++;
+    await validation;
+  };
+  const attempts = [m.retry(), m.install(), m.retry()];
+  unblock();
+  await Promise.all(attempts);
+  assert.deepEqual([validations, counts.prepares, counts.installs], [1, 1, 1]);
+});

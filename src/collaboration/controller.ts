@@ -15,6 +15,7 @@ import {
   editText,
 } from "../../shared/collaboration/document.js";
 import { mergedLayout } from "../../shared/collaboration/layout.js";
+import { boardSchema, BOARD_TITLE_LIMIT } from "../../shared/schema.js";
 import { collaborationId } from "../../shared/collaboration/ids.js";
 
 export async function collaboration<T = any>(
@@ -28,7 +29,12 @@ export async function collaboration<T = any>(
     body,
   );
   if (!result.ok)
-    throw new Error(result.error || "Collaboration operation failed");
+    throw Object.assign(
+      new Error(result.error || "Collaboration operation failed"),
+      {
+        code: result.code,
+      },
+    );
   return result.data as T;
 }
 type Message = { session: string; before: string; data: string };
@@ -71,7 +77,7 @@ export class SharedBoardController {
   incoming: string[] = [];
   disposed = false;
   resetting = false;
-  onReset?: () => Promise<void>;
+  onReset?: (notice: string, onOpened: () => void) => Promise<void>;
   undoManager: Y.UndoManager;
   cached: Board | null = null;
   statusVersion = 0;
@@ -284,18 +290,38 @@ export class SharedBoardController {
       this.error = (error as Error).message;
     }
   }
-  async reconcileReset() {
+  async reconcileReset(rejected = false) {
     if (this.resetting || this.disposed) return;
     this.resetting = true;
     this.invalidate();
     try {
-      await collaboration("preserve-local", this.boardId, this.getSnapshot());
-      this.outbox = [];
-      this.persistOutbox();
-      await this.onReset?.();
+      if (!this.onReset) throw new Error("This board cannot reopen yet.");
+      let board;
+      try {
+        board = boardSchema.safeParse(this.getSnapshot());
+      } catch {
+        // A rejected CRDT value may be impossible to project as a private board.
+      }
+      if (board?.success)
+        await collaboration("preserve-local", this.boardId, {
+          board: board.data,
+          rejected,
+        });
+      else
+        await collaboration("preserve-draft", this.boardId, {
+          data: base64(Y.encodeStateAsUpdate(this.doc)),
+        });
+      await this.onReset(
+        "Unsent edits were saved under Deleted items & recovery.",
+        () => {
+          this.outbox = [];
+          this.persistOutbox();
+        },
+      );
     } catch (error) {
+      this.resetting = false;
       this.error =
-        "A recovery copy could not be saved. Your current local view has been retained. " +
+        "A recovery copy could not be saved or the board could not reopen. Your edits are retained. " +
         (error as Error).message;
       this.invalidate();
     }
@@ -319,6 +345,7 @@ export class SharedBoardController {
     if (this.draining || this.disposed || this.resetting) return;
     this.draining = true;
     try {
+      const hadEdits = this.outbox.length > 0;
       while (this.outbox.length && !this.disposed && !this.resetting) {
         const next = this.outbox[0];
         await collaboration("update", this.boardId, next);
@@ -326,17 +353,21 @@ export class SharedBoardController {
         if (this.outbox[0] === next) this.outbox.shift();
         this.persistOutbox();
       }
-      if (!this.network?.quarantined) this.error = "";
+      if (hadEdits && !this.network?.quarantined) this.error = "";
     } catch (error) {
-      this.error = (error as Error).message;
-      if (/unobserved|excluded|permission/.test(this.error))
-        void this.reconcileReset();
+      const failure = error as Error & { code?: string };
+      this.error = failure.message;
+      if (failure.code === "COLLAB_EDIT_REJECTED")
+        await this.reconcileReset(true);
+      else if (/unobserved|excluded|permission/.test(this.error))
+        await this.reconcileReset();
     } finally {
       this.draining = false;
       this.invalidate();
     }
   }
   flushSync() {
+    if (this.resetting) return;
     while (this.outbox.length) {
       const result = window.intelboard.saveCollaboration(
         this.boardId,
@@ -344,6 +375,8 @@ export class SharedBoardController {
       );
       if (!result.ok) {
         this.error = result.error || "Local changes could not be saved";
+        if (result.code === "COLLAB_EDIT_REJECTED" && !this.disposed)
+          void this.flush();
         break;
       }
       this.outbox.shift();
@@ -361,8 +394,9 @@ export class SharedBoardController {
   };
   setTitle = (value: Setter<string>) => {
     if (this.resetting || this.network?.active === false) return;
-    const before = boardValue(this.doc),
-      title = typeof value === "function" ? value(before.title) : value;
+    const title =
+      typeof value === "function" ? value(boardValue(this.doc).title) : value;
+    if (!title.trim() || title.length > BOARD_TITLE_LIMIT) return;
     this.doc.transact(() => editText(this.doc.getText("title"), title), LOCAL);
   };
   setNodes = (value: Setter<Item[]>) => {
@@ -493,29 +527,6 @@ export class SharedBoardController {
         },
       );
     }, LOCAL);
-    for (const node of proposed)
-      for (const key of ["assetId", "thumbnailId", "faviconId"] as const) {
-        const id = node.data[key];
-        if (
-          id &&
-          id !== old.get(node.id)?.data[key] &&
-          !this.doc.getMap("assets").has(id)
-        )
-          void collaboration("asset", this.boardId, { id })
-            .then((manifest) => {
-              if (this.disposed) return;
-              const entry = this.doc.getMap<any>("nodes").get(node.id);
-              if (entry?.get("data").get(key) === id)
-                this.doc.transact(
-                  () => entry.get("data").set(key, manifest.id),
-                  LOCAL,
-                );
-            })
-            .catch((error) => {
-              this.error = error.message;
-              this.invalidate();
-            });
-      }
     this.presence({
       selection: proposed
         .filter((n) => n.selected)
@@ -661,15 +672,17 @@ export function useSharedBoard(board: Board) {
     if (!board.shared) return;
     let active = true;
     let current: SharedBoardController | null = null;
-    const open = async () => {
+    const open = async (notice = "", onOpened?: () => void) => {
       const opened = await collaboration("open", board.id);
       if (!active) return;
       const previous = current;
+      onOpened?.();
       current = new SharedBoardController(
         { ...board, viewport: previous?.viewport || board.viewport },
         opened,
       );
       current.onReset = open;
+      if (notice) current.error = notice;
       ref.current = current;
       setController(current);
       previous?.dispose();
@@ -691,7 +704,8 @@ export function useSharedBoard(board: Board) {
     if (!controller) return;
     const exit = (event: BeforeUnloadEvent) => {
       controller.flushSync();
-      if (controller.outbox.length) event.preventDefault();
+      if (controller.outbox.length || controller.resetting)
+        event.preventDefault();
     };
     window.addEventListener("beforeunload", exit);
     return () => window.removeEventListener("beforeunload", exit);

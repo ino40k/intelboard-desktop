@@ -8,7 +8,7 @@ import {
   publicId,
   hash,
 } from "./identity.js";
-import { validName } from "./membership.js";
+import { membershipProof, validName } from "./membership.js";
 import { CollaborationEngine } from "./engine.js";
 import { CollaborationMedia, manifestSchema } from "./media.js";
 import { TailcatTransport } from "./transport.js";
@@ -106,10 +106,7 @@ export class CollaborationManager extends EventEmitter {
             continue;
           }
           if (event.records?.length && context.id !== event.source)
-            void this.send(context, {
-              type: "changes",
-              records: event.records,
-            }).catch(() => {});
+            void this.sendChanges(context, event.records).catch(() => {});
         }
       this.notify(event.boardId);
     });
@@ -349,63 +346,86 @@ export class CollaborationManager extends EventEmitter {
     this.checkProfile(record);
     const old = this.peers.get(record.payload.author);
     if (!old || old.payload.sequence < record.payload.sequence) {
-      this.peers.set(record.payload.author, record);
       this.service.store.db
         .prepare(
           "INSERT INTO collab_profiles VALUES(?,?) ON CONFLICT(public_key) DO UPDATE SET record=excluded.record",
         )
         .run(record.payload.author, JSON.stringify(record));
+      this.service.store.afterCommit(() =>
+        this.peers.set(record.payload.author, record),
+      );
     }
   }
-  authenticate(context, body, expected) {
-    const proof = body.proof;
+  checkHello(context, body, expected, expectedDocument) {
+    const proof = body?.proof;
     if (
       !authentic(proof) ||
       proof.payload.kind !== "session" ||
+      proof.payload.v !== 1 ||
       proof.payload.transportKey !== context.peerKey ||
-      (expected && proof.payload.author !== expected)
+      (expected && proof.payload.author !== expected) ||
+      (expectedDocument && proof.payload.docId !== expectedDocument)
     )
       throw new Error("Peer identity does not match the encrypted connection");
-    const row = this.service.store.db
-      .prepare("SELECT board_id FROM collab_boards WHERE doc_id=?")
-      .get(proof.payload.docId);
-    if (!row) throw new Error("Board unavailable or access denied");
-    const entry = this.engine.get(row.board_id);
-    if (body.genesis?.id !== entry.genesis.id)
-      throw new Error("Board ownership proof differs");
     if (
       !Array.isArray(body.membership) ||
       body.membership.length > 512 ||
       body.membership.some(
-        (r) => !["grant", "policy"].includes(r.payload?.kind),
+        (r) => !["grant", "policy"].includes(r?.payload?.kind),
       )
     )
       throw new Error("Invalid membership proof");
-    for (let i = 0; i < body.membership.length; i += 128)
-      this.engine.ingest(
-        row.board_id,
-        body.membership.slice(i, i + 128),
-        context.id,
-      );
-    if (!entry.members.members.has(proof.payload.author)) {
-      if (entry.members.revoked.has(publicId(proof.payload.author)))
-        void this.sendRemoval(context, entry).catch(() => {});
-      throw new Error("Board unavailable or access denied");
-    }
     const profile = this.checkProfile(body.profile);
     if (profile.payload.author !== proof.payload.author)
       throw new Error("Mismatched peer profile");
-    this.saveProfile(profile);
-    context.boardId = row.board_id;
-    context.publicKey = proof.payload.author;
-    context.authenticated = true;
+    return proof.payload;
+  }
+  authenticate(context, body, expected) {
+    const proof = this.checkHello(
+      context,
+      body,
+      expected,
+      context.expectedDocument,
+    );
+    const row = this.service.store.db
+      .prepare("SELECT board_id FROM collab_boards WHERE doc_id=?")
+      .get(proof.docId);
+    if (!row || (context.authenticated && context.boardId !== row.board_id))
+      throw new Error("Board unavailable or access denied");
+    const entry = this.engine.get(row.board_id);
+    if (body.genesis?.id !== entry.genesis.id)
+      throw new Error("Board ownership proof differs");
+    if (
+      !this.engine.authenticateMembership(
+        entry,
+        body.membership,
+        proof.author,
+        context.id,
+      ) ||
+      !entry.members.members.has(proof.author) ||
+      !entry.members.members.has(this.engine.identity.publicKey)
+    ) {
+      if (entry.members.revoked.has(publicId(proof.author)))
+        void this.sendRemoval(context, entry).catch(() => {});
+      throw new Error("Board unavailable or access denied");
+    }
+    this.saveProfile(body.profile);
+    this.identifyPeer(context, row.board_id, proof.author);
     return entry;
   }
-  hello(context, entry) {
+  identifyPeer(context, boardId, publicKey) {
+    context.boardId = boardId;
+    context.publicKey = publicKey;
+    context.authenticated = true;
+  }
+  hello(context, entry, joining) {
     return {
       proof: this.proof(context, entry.docId),
       genesis: entry.genesis,
-      membership: entry.records.filter((r) => r.payload.kind !== "update"),
+      membership: membershipProof(entry.members, [
+        this.engine.identity.publicKey,
+        joining,
+      ]),
       profile: this.profile,
     };
   }
@@ -414,8 +434,27 @@ export class CollaborationManager extends EventEmitter {
       ? this.transport.send(context.id, frame)
       : Promise.reject(new Error("Peer networking is not running"));
   }
+  async sendChanges(context, records) {
+    let batch = [],
+      size = 0;
+    for (const record of records) {
+      const bytes = JSON.stringify(record).length;
+      if (
+        batch.length &&
+        (batch.length === 128 || size + bytes > 3 * 1024 * 1024)
+      ) {
+        await this.send(context, { type: "changes", records: batch });
+        batch = [];
+        size = 0;
+      }
+      batch.push(record);
+      size += bytes;
+    }
+    if (batch.length)
+      await this.send(context, { type: "changes", records: batch });
+  }
   async sendRemoval(context, entry) {
-    const policies = entry.records.filter((r) => r.payload.kind === "policy");
+    const policies = entry.members.policies.slice(1);
     for (let i = 0; i < policies.length; i += 64)
       await this.send(context, {
         type: "revoked",
@@ -500,11 +539,14 @@ export class CollaborationManager extends EventEmitter {
       if (!pending || pending.connection !== context.id) return;
       clearTimeout(pending.timer);
       this.pending.delete(frame.request);
-      if (!frame.error && pending.method === "hello")
-        this.authenticate(context, frame.body, context.expectedPublic);
-      frame.error
-        ? pending.reject(new Error(String(frame.error).slice(0, 500)))
-        : pending.resolve(frame.body);
+      try {
+        if (frame.error) throw new Error(String(frame.error).slice(0, 500));
+        if (pending.method === "hello")
+          this.authenticate(context, frame.body, context.expectedPublic);
+        pending.resolve(frame.body);
+      } catch (error) {
+        pending.reject(error);
+      }
       return;
     }
     if (frame.type === "request") {
@@ -544,6 +586,11 @@ export class CollaborationManager extends EventEmitter {
     if (frame.type === "changes") {
       await this.guard.check(frame.records);
       if (this.closed) return;
+      if (
+        !context.authenticated ||
+        !entry.members.members.has(context.publicKey)
+      )
+        throw new Error("Access denied");
       this.engine.ingest(context.boardId, frame.records, context.id);
       for (const record of frame.records) context.remoteKnown.add(record.id);
       await this.send(context, {
@@ -589,20 +636,37 @@ export class CollaborationManager extends EventEmitter {
         .int()
         .min(0)
         .max(1000000)
-        .parse(body.offset || 0);
-      const records = entry.records.filter(
-        (r) =>
-          r.payload.kind !== "update" ||
-          entry.members.members.has(r.payload.author) ||
-          entry.eligibility.past.has(r.id),
+        .parse(body.offset ?? 0);
+      const profiles = () =>
+        [...this.peers.values()].filter((p) =>
+          entry.members.members.has(p.payload.author),
+        );
+      if (body.incremental === true) {
+        const epoch = entry.inventoryEpoch;
+        const start =
+          body.epoch === epoch && offset <= entry.records.length ? offset : 0;
+        const ids = [];
+        let next = start;
+        for (; next < entry.records.length && ids.length < 256; next++) {
+          const record = entry.records[next];
+          if (this.canSendRecord(entry, record)) ids.push(record.id);
+        }
+        return {
+          ids,
+          epoch,
+          offset: next,
+          more: next < entry.records.length,
+          profiles: profiles(),
+        };
+      }
+      const records = entry.records.filter((record) =>
+        this.canSendRecord(entry, record),
       );
       return {
         ids: records.slice(offset, offset + 256).map((r) => r.id),
         more: offset + 256 < records.length,
         total: records.length,
-        profiles: [...this.peers.values()].filter((p) =>
-          entry.members.members.has(p.payload.author),
-        ),
+        profiles: profiles(),
       };
     }
     if (method === "records") {
@@ -615,12 +679,7 @@ export class CollaborationManager extends EventEmitter {
       const records = [];
       let size = 0;
       for (const record of entry.records)
-        if (
-          ids.has(record.id) &&
-          (record.payload.kind !== "update" ||
-            entry.members.members.has(record.payload.author) ||
-            entry.eligibility.past.has(record.id))
-        ) {
+        if (ids.has(record.id) && this.canSendRecord(entry, record)) {
           const bytes = JSON.stringify(record).length;
           if (size + bytes > 3 * 1024 * 1024) break;
           records.push(record);
@@ -640,6 +699,16 @@ export class CollaborationManager extends EventEmitter {
     }
     throw new Error("Unknown collaboration operation");
   }
+  canSendRecord(entry, record) {
+    const { kind, author } = record.payload;
+    if (kind === "update")
+      return (
+        entry.members.members.has(author) ||
+        entry.eligibility.past.has(record.id)
+      );
+    if (kind === "grant") return entry.members.grants.has(record.id);
+    return entry.members.policies.some((policy) => policy.id === record.id);
+  }
   fail(context, error) {
     if (context.boardId) {
       this.errors.set(context.boardId, error.message);
@@ -655,40 +724,77 @@ export class CollaborationManager extends EventEmitter {
     context.syncing = true;
     this.notify(context.boardId);
     try {
-      const entry = this.engine.get(context.boardId),
-        remote = [];
+      const entry = this.engine.get(context.boardId);
+      let cursor = context.inventoryCursor;
       for (let offset = 0; ; offset += 256) {
-        const response = await this.request(context, "inventory", { offset });
+        if (
+          !context.authenticated ||
+          !entry.members.members.has(context.publicKey)
+        )
+          throw new Error("Access denied");
+        const response = await this.request(context, "inventory", {
+          incremental: true,
+          offset: cursor?.offset ?? offset,
+          epoch: cursor?.epoch,
+        });
         const ids = z
           .array(z.string().regex(/^[a-f0-9]{64}$/))
           .max(256)
           .parse(response.ids);
-        remote.push(...ids);
+        const next =
+          typeof response.epoch === "string"
+            ? {
+                epoch: uuid.parse(response.epoch),
+                offset: z
+                  .number()
+                  .int()
+                  .min(0)
+                  .max(1000000)
+                  .parse(response.offset),
+              }
+            : null;
+        if (cursor && next?.epoch !== cursor.epoch) context.remoteKnown.clear();
+        for (const id of ids) context.remoteKnown.add(id);
         for (const profile of response.profiles || [])
           if (entry.members.members.has(profile.payload?.author))
             this.saveProfile(profile);
-        if (response.more !== true) break;
-        if (offset >= 1000000)
+        const known = ids.length
+          ? new Set(entry.records.map((r) => r.id))
+          : null;
+        let missing = ids.filter((id) => !known.has(id));
+        while (missing.length) {
+          const requested = new Set(missing.slice(0, 32));
+          const reply = await this.request(context, "records", {
+            ids: [...requested],
+          });
+          if (
+            !Array.isArray(reply.records) ||
+            !reply.records.length ||
+            reply.records.some((record) => !requested.has(record?.id))
+          )
+            throw new Error("Peer could not supply requested history");
+          await this.guard.check(reply.records);
+          if (this.closed) return;
+          if (
+            !context.authenticated ||
+            !entry.members.members.has(context.publicKey)
+          )
+            throw new Error("Access denied");
+          this.engine.ingest(context.boardId, reply.records, context.id);
+          const received = new Set(reply.records.map((r) => r.id));
+          await this.send(context, { type: "ack", ids: [...received] });
+          missing = missing.filter((id) => !received.has(id));
+        }
+        if (response.more !== true) {
+          context.inventoryCursor = next;
+          break;
+        }
+        if (
+          offset >= 1000000 ||
+          (next && next.epoch === cursor?.epoch && next.offset <= cursor.offset)
+        )
           throw new Error("Peer history exceeds the supported inventory size");
-      }
-      context.remoteKnown = new Set(remote);
-      const known = new Set(entry.records.map((r) => r.id));
-      let missing = remote.filter((id) => !known.has(id));
-      while (missing.length) {
-        const reply = await this.request(context, "records", {
-          ids: missing.slice(0, 32),
-        });
-        if (!Array.isArray(reply.records) || !reply.records.length)
-          throw new Error("Peer could not supply requested history");
-        await this.guard.check(reply.records);
-        if (this.closed) return;
-        this.engine.ingest(context.boardId, reply.records, context.id);
-        await this.send(context, {
-          type: "ack",
-          ids: reply.records.map((r) => r.id),
-        });
-        const received = new Set(reply.records.map((r) => r.id));
-        missing = missing.filter((id) => !received.has(id));
+        cursor = next;
       }
       this.errors.delete(context.boardId);
       if (
@@ -711,16 +817,18 @@ export class CollaborationManager extends EventEmitter {
       throw new Error("No connection address is known for this collaborator");
     const event = await this.transport.dial(profile.payload.address, lane),
       context = this.connections.get(event.id);
+    if (!context) throw new Error("Peer disconnected during connection setup");
     context.expectedPublic = publicKey;
-    const entry = this.engine.get(boardId);
-    const reply = await this.request(
-      context,
-      "hello",
-      this.hello(context, entry),
-    );
-    this.authenticate(context, reply, publicKey);
-    this.notify(boardId);
-    return context;
+    context.expectedDocument = this.engine.get(boardId).docId;
+    try {
+      const entry = this.engine.get(boardId);
+      await this.request(context, "hello", this.hello(context, entry));
+      this.notify(boardId);
+      return context;
+    } catch (error) {
+      await this.transport.disconnect(context.id).catch(() => {});
+      throw error;
+    }
   }
   tick() {
     return this.trackUpdateWork(() => this.tickWork());
@@ -758,7 +866,7 @@ export class CollaborationManager extends EventEmitter {
         this.dialing.add(key);
         void this.dial(member, row.board_id)
           .then((c) => this.synchronize(c))
-          .catch(() => {})
+          .catch((error) => this.fail({ boardId: row.board_id }, error))
           .finally(() => this.dialing.delete(key));
       }
     }
@@ -796,11 +904,11 @@ export class CollaborationManager extends EventEmitter {
     this.notify(context.boardId);
     let bulk;
     try {
-      bulk = await this.dial(context.publicKey, context.boardId, "bulk");
       for (const manifest of manifests.sort((a, b) => a.size - b.size)) {
         let offset = await this.media.resume(manifest, entry.docId);
         progress.received += offset;
         while (offset < manifest.size) {
+          bulk ||= await this.dial(context.publicKey, context.boardId, "bulk");
           const reply = await this.request(bulk, "chunk", {
             id: manifest.id,
             offset,
@@ -818,17 +926,6 @@ export class CollaborationManager extends EventEmitter {
           this.notify(context.boardId);
         }
         this.emit("delta", { boardId: context.boardId, assetsChanged: true });
-        this.service.store.db
-          .prepare(
-            "INSERT OR IGNORE INTO asset_refs SELECT board_id,id,? FROM elements WHERE board_id=? AND (json_extract(content,'$.data.assetId')=? OR json_extract(content,'$.data.thumbnailId')=? OR json_extract(content,'$.data.faviconId')=?)",
-          )
-          .run(
-            manifest.id,
-            context.boardId,
-            manifest.id,
-            manifest.id,
-            manifest.id,
-          );
       }
     } finally {
       if (bulk) await this.transport.disconnect(bulk.id);
@@ -899,29 +996,33 @@ export class CollaborationManager extends EventEmitter {
       );
     const event = await this.transport.dial(invite.payload.address, "control"),
       context = this.connections.get(event.id);
+    if (!context) throw new Error("Peer disconnected during connection setup");
     const reply = await this.request(context, "join", {
       invite,
       proof: this.proof(context, invite.payload.docId),
       profile: this.profile,
     });
+    const host = this.checkHello(
+      context,
+      reply,
+      invite.payload.author,
+      invite.payload.docId,
+    );
     if (
-      !authentic(reply.proof) ||
-      reply.proof.payload.author !== invite.payload.author ||
-      reply.proof.payload.transportKey !== context.peerKey ||
-      reply.genesis.payload.author !== invite.payload.owner ||
+      reply.genesis?.payload?.author !== invite.payload.owner ||
       reply.genesis.payload.docId !== invite.payload.docId
     )
       throw new Error("Invitation host identity could not be verified");
-    if (
-      !Array.isArray(reply.membership) ||
-      reply.membership.some(
-        (r) => !["grant", "policy"].includes(r.payload?.kind),
-      )
-    )
-      throw new Error("Invalid invitation membership proof");
-    const boardId = this.engine.accept(reply.genesis, reply.membership);
-    this.setting("collaboration.initial." + reply.genesis.payload.docId, true);
-    this.authenticate(context, reply, invite.payload.author);
+    const boardId = this.service.store.transaction(() => {
+      const id = this.engine.accept(
+        reply.genesis,
+        reply.membership,
+        host.author,
+      );
+      this.saveProfile(reply.profile);
+      return id;
+    });
+    this.identifyPeer(context, boardId, host.author);
     void this.synchronize(context).catch((error) => this.fail(context, error));
     return { boardId };
   }
@@ -932,6 +1033,8 @@ export class CollaborationManager extends EventEmitter {
       invite.payload.author !== this.engine.identity.publicKey ||
       invite.payload.kind !== "invite" ||
       !authentic(body.proof) ||
+      body.proof.payload.kind !== "session" ||
+      body.proof.payload.v !== 1 ||
       body.proof.payload.transportKey !== context.peerKey ||
       body.proof.payload.docId !== invite.payload.docId
     )
@@ -955,12 +1058,11 @@ export class CollaborationManager extends EventEmitter {
       .prepare("SELECT board_id FROM collab_boards WHERE doc_id=?")
       .get(saved.doc_id);
     const entry = this.engine.get(row.board_id);
-    let grant;
+    if (!entry.members.members.has(this.engine.identity.publicKey))
+      throw new Error("Invitation expired, revoked, or already used");
     this.service.store.transaction(() => {
-      if (saved.grant_id)
-        grant = entry.records.find((r) => r.id === saved.grant_id);
-      else {
-        grant = this.engine.grant(
+      if (!saved.grant_id) {
+        const grant = this.engine.grant(
           row.board_id,
           profile.payload.author,
           profile.payload.name,
@@ -970,11 +1072,11 @@ export class CollaborationManager extends EventEmitter {
           .run(profile.payload.author, grant.id, saved.id);
       }
     });
+    if (!entry.members.members.has(profile.payload.author))
+      throw new Error("Invitation expired, revoked, or already used");
     this.saveProfile(profile);
-    context.boardId = row.board_id;
-    context.publicKey = profile.payload.author;
-    context.authenticated = true;
-    return this.hello(context, entry);
+    this.identifyPeer(context, row.board_id, profile.payload.author);
+    return this.hello(context, entry, profile.payload.author);
   }
   presence(boardId, value) {
     this.ensure();
@@ -1077,9 +1179,19 @@ export class CollaborationManager extends EventEmitter {
       });
       return { ok: true };
     }
-    if (operation === "preserve-local") {
-      const board = boardSchema.parse(body);
-      if (JSON.stringify(board).length > 32 * 1024 * 1024)
+    if (operation === "preserve-local" || operation === "preserve-draft") {
+      const raw = operation === "preserve-draft";
+      const saved = raw
+        ? {
+            format: "intelboard-crdt-draft",
+            data: z
+              .string()
+              .max(64 * 1024 * 1024)
+              .parse(body.data),
+          }
+        : boardSchema.parse(body.board);
+      const content = JSON.stringify(saved);
+      if (!raw && content.length > 32 * 1024 * 1024)
         throw new Error("Recovery copy is too large");
       this.service.store.db
         .prepare("INSERT INTO collab_recovery VALUES(?,?,?,?,?)")
@@ -1087,17 +1199,33 @@ export class CollaborationManager extends EventEmitter {
           randomUUID(),
           this.engine.get(boardId).docId,
           Date.now(),
-          "Unsent local changes retained during membership reconciliation",
-          JSON.stringify(board),
+          raw
+            ? "Unsent collaborative draft"
+            : body.rejected
+              ? "Unsent edits retained after a save was rejected"
+              : "Unsent local changes retained during membership reconciliation",
+          content,
         );
       return { ok: true };
     }
     if (operation === "asset") {
+      const entry = this.engine.get(boardId);
+      if (!entry?.members.members.has(this.engine.identity.publicKey))
+        throw new Error(
+          "You no longer have permission to edit this shared board.",
+        );
       const manifest = await this.media.local(uuid.parse(body.id));
-      this.media.authorize(this.engine.get(boardId).docId, manifest);
-      this.engine.edit(boardId, (doc) =>
-        doc.getMap("assets").set(manifest.id, manifest),
-      );
+      if (!entry.members.members.has(this.engine.identity.publicKey))
+        throw new Error(
+          "You no longer have permission to edit this shared board.",
+        );
+      this.service.store.transaction(() => {
+        this.engine.edit(boardId, (doc) => {
+          if (!doc.getMap("assets").has(manifest.id))
+            doc.getMap("assets").set(manifest.id, manifest);
+        });
+        this.media.authorize(entry.docId, manifest);
+      });
       return manifest;
     }
     if (operation === "recovery") {
@@ -1111,7 +1239,7 @@ export class CollaborationManager extends EventEmitter {
         },
         forks: this.service.store.db
           .prepare(
-            "SELECT id,created,reason FROM collab_recovery WHERE doc_id=? AND created>? ORDER BY created DESC LIMIT 32",
+            "SELECT id,created,reason,(reason='Unsent collaborative draft') AS draft FROM collab_recovery WHERE doc_id=? AND created>? ORDER BY created DESC LIMIT 32",
           )
           .all(entry.docId, Date.now() - 30 * 86400000),
       };
@@ -1159,36 +1287,21 @@ export class CollaborationManager extends EventEmitter {
       });
       return { ok: true };
     }
-    if (operation === "private-copy") {
-      if (!this.canExport(boardId))
-        throw new Error(
-          "Some shared content or attachments are still arriving. Retry the private copy after synchronization finishes.",
-        );
-      const board = this.service.store.get(boardId),
-        copy = this.service.store.create(
-          (board.title + " — private copy").slice(0, 200),
-        );
-      const nodes = board.nodes.map((node) => {
-        const data = { ...node.data };
-        for (const key of ["assetId", "thumbnailId", "faviconId"])
-          if (data[key] && !this.service.assets.get(data[key]))
-            delete data[key];
-        return { ...node, data };
-      });
-      this.service.store.save(copy.id, {
-        ...board,
-        nodes,
-        title: copy.title,
-        revision: 0,
-      });
-      return { boardId: copy.id };
-    }
-    if (operation === "restore-fork") {
+    if (operation === "private-copy")
+      return { boardId: this.copyBoard(boardId, " — private copy").id };
+    if (operation === "restore-fork" || operation === "recovery-draft") {
       const row = this.service.store.db
         .prepare("SELECT board FROM collab_recovery WHERE id=? AND doc_id=?")
         .get(uuid.parse(body.id), this.engine.get(boardId).docId);
       if (!row) throw new Error("Recovery copy not found");
       const recovered = JSON.parse(row.board);
+      if (operation === "recovery-draft") {
+        if (recovered.format !== "intelboard-crdt-draft")
+          throw new Error("Collaborative draft not found");
+        return recovered;
+      }
+      if (recovered.format === "intelboard-crdt-draft")
+        throw new Error("Download this draft from the recovery panel.");
       if (
         recovered.nodes.some((n) =>
           ["assetId", "thumbnailId", "faviconId"].some(
@@ -1199,16 +1312,17 @@ export class CollaborationManager extends EventEmitter {
         throw new Error(
           "This recovery copy still references unavailable attachments. Its content has been retained; restore the missing files before opening a complete private copy.",
         );
-      const saved = JSON.parse(row.board),
-        copy = this.service.store.create(
-          (saved.title + " — recovered").slice(0, 200),
+      return this.service.store.transaction(() => {
+        const copy = this.service.store.create(
+          (recovered.title + " — recovered").slice(0, 200),
         );
-      this.service.store.save(copy.id, {
-        ...saved,
-        revision: 0,
-        title: copy.title,
+        this.service.store.save(copy.id, {
+          ...recovered,
+          revision: 0,
+          title: copy.title,
+        });
+        return { boardId: copy.id };
       });
-      return { boardId: copy.id };
     }
     if (operation === "viewport") {
       const viewport = z
@@ -1224,6 +1338,13 @@ export class CollaborationManager extends EventEmitter {
       return { ok: true };
     }
     throw new Error("Unknown collaboration operation");
+  }
+  copyBoard(boardId, suffix) {
+    if (!this.canExport(boardId))
+      throw new Error(
+        "Some shared content or attachments are still arriving. Retry the private copy after synchronization finishes.",
+      );
+    return this.service.store.duplicate(boardId, suffix);
   }
   canExport(boardId) {
     if (!this.engine) return true;

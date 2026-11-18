@@ -9,9 +9,9 @@ A private visual workspace for sources, thoughts, media, and the connections bet
 - Board search, themes, minimap, clipboard operations, undo and redo.
 - Local autosave, recovery drafts, native file dialogs and complete portable board/workspace exports.
 
-## Collaboration development preview
+## Collaboration
 
-Development preview **1.1.0-dev.6** includes invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Private boards remain private until explicitly shared. Download the collaboration preview from [its prerelease page](https://github.com/ino40k/intelboard-desktop/releases/tag/v1.1.0-dev.6). This update also adds right-button navigation, zoom-aware handles and magnetic alignment; see [canvas interactions](docs/CANVAS_INTERACTIONS.md). The stable 1.0.4 edition does not include these changes. See [collaboration architecture and usage](docs/COLLABORATION.md) and [validation](docs/COLLABORATION_VALIDATION.md).
+**1.1.0** includes invitation-based, peer-to-peer shared boards with durable offline merging, rich-text collaboration, cursors, background media transfer and owner-controlled membership. Sharing is opt-in for each board. See [collaboration usage and architecture](docs/COLLABORATION.md) and [canvas interactions](docs/CANVAS_INTERACTIONS.md).
 
 ## Install
 
@@ -19,9 +19,9 @@ Download the latest stable release for **Windows 11 x64** or **Fedora Linux x64*
 
 **Windows:** run `IntelBoard-<version>-win-x64.exe` and follow the installer. Installation is per user, with Start Menu and optional desktop shortcuts. Unsigned initial builds may show Windows reputation warnings. No administrator account is required for the default installation.
 
-**Fedora:** download `IntelBoard-<version>-linux-x86_64.AppImage`. In the file manager, open Properties → Permissions and allow execution, then launch it. The AppImage uses your system's normal desktop libraries; if FUSE is unavailable, use an AppImage integration tool or extract it with `./IntelBoard-<version>-linux-x86_64.AppImage --appimage-extract` and launch `squashfs-root/AppRun`. No Node.js, database server or Docker is needed. The upcoming updater-enabled edition adds its own optional managed launcher; IntelBoard does not install a background service.
+**Fedora:** download `IntelBoard-<version>-linux-x86_64.AppImage`. In the file manager, open Properties → Permissions and allow execution, then launch it. The AppImage uses your system's normal desktop libraries; if FUSE is unavailable, use an AppImage integration tool or extract it with `./IntelBoard-<version>-linux-x86_64.AppImage --appimage-extract` and launch `squashfs-root/AppRun`. No Node.js, database server or Docker is needed. The Updates menu offers an optional managed Linux launcher.
 
-Versions through 1.1.0-dev.5 update manually. Development preview **1.1.0-dev.6** adds green stable and yellow experimental update notifications, download progress and automatic installation/restart. Install the first updater-enabled package manually once; Linux users can then set up the managed launcher from the Updates menu or during their first update. Boards and preferences remain outside the installation. See [integrated updates, safety and validation](docs/UPDATER.md).
+Install 1.1.0 manually if you use a version through 1.1.0-dev.5. On 1.1.0-dev.6 or later, use **Updates → Check for updates…**. Linux users can set up the managed launcher from the Updates menu or during their first update. Boards and preferences are stored separately from the installation. See [integrated updates, safety and validation](docs/UPDATER.md).
 
 ## Use
 
@@ -41,7 +41,7 @@ Deleting a board retains uploaded files, matching the original's recoverability 
 
 ## Build from source
 
-Use Node.js **24 LTS**, npm, Go **1.27.1** (see `native/network/go.mod`), and the standard build tools for your platform. These are developer requirements only.
+Use Node.js **24 LTS**, npm, Go **1.27.4** (see `native/network/go.mod`), and the standard build tools for your platform. These are developer requirements only.
 
 ```sh
 npm ci

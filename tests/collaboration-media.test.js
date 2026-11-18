@@ -130,3 +130,40 @@ test("malformed Yjs decoding is contained in a bounded worker and a subsequent v
   ]);
   doc.destroy();
 });
+
+test("a fully written checkpoint finalizes after an interrupted registration", async (t) => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "intelboard-media-finalize-"),
+  );
+  const source = createService(path.join(root, "source"));
+  const targetDir = path.join(root, "target");
+  let target = createService(targetDir);
+  t.after(async () => {
+    source.close();
+    target.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const bytes = Buffer.from("attachment checkpoint");
+  const asset = await source.assets.add(bytes, "attachment.txt", "text/plain");
+  const manifest = await new CollaborationMedia(source, root).local(asset.id);
+  const receiver = new CollaborationMedia(target, targetDir);
+  target.assets.add = async () => {
+    throw new Error("Registration interrupted");
+  };
+  await assert.rejects(
+    receiver.chunk(manifest, 0, bytes),
+    /Registration interrupted/,
+  );
+  assert.equal(receiver.complete(manifest), false);
+  target.close();
+  target = createService(targetDir);
+  const restarted = new CollaborationMedia(target, targetDir);
+  assert.equal(await restarted.resume(manifest), bytes.length);
+  assert.equal(restarted.complete(manifest), true);
+  assert.deepEqual(await restarted.read(manifest, 0), bytes);
+  assert.equal(
+    target.store.db.prepare("SELECT COUNT(*) AS n FROM collab_downloads").get()
+      .n,
+    0,
+  );
+});

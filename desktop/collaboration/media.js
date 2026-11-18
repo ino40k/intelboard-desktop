@@ -119,17 +119,31 @@ export class CollaborationMedia {
       existing.size === manifest.size
     );
   }
+  async withWrite(manifest, operation) {
+    if (this.locks.has(manifest.hash))
+      throw new Error("This attachment already has an active write");
+    this.locks.add(manifest.hash);
+    try {
+      return await operation();
+    } finally {
+      this.locks.delete(manifest.hash);
+    }
+  }
   async resume(manifest, docId) {
     manifest = manifestSchema.parse(manifest);
-    await mkdir(this.partialDir, { recursive: true, mode: 0o700 });
+    return this.withWrite(manifest, () => this.resumeLocked(manifest, docId));
+  }
+  async resumeLocked(manifest, docId) {
     if (this.complete(manifest, docId)) return manifest.size;
-    // Reuse already validated local bytes even when the file was imported under
-    // another UUID. Hash identity avoids repeated transfer of identical media.
-    const same = this.service.store.db
-      .prepare("SELECT id FROM assets WHERE checksum=? AND size=? LIMIT 1")
-      .get(manifest.hash, manifest.size);
-    if (same && !docId) {
+    await mkdir(this.partialDir, { recursive: true, mode: 0o700 });
+    const same =
+      !docId &&
+      this.service.store.db
+        .prepare("SELECT id FROM assets WHERE checksum=? AND size=? LIMIT 1")
+        .get(manifest.hash, manifest.size);
+    if (same) {
       await this.local(same.id);
+      await this.finish(manifest, docId);
       return manifest.size;
     }
     const filename = path.join(this.partialDir, manifest.hash + ".part");
@@ -155,6 +169,7 @@ export class CollaborationMedia {
         "INSERT INTO collab_downloads VALUES(?,?,?) ON CONFLICT(hash) DO UPDATE SET manifest=excluded.manifest,received=excluded.received",
       )
       .run(manifest.hash, JSON.stringify(manifest), received);
+    if (received === manifest.size) await this.finalize(manifest, docId);
     return received;
   }
   async chunk(manifest, offset, bytes, docId) {
@@ -168,18 +183,25 @@ export class CollaborationMedia {
       offset + bytes.length > manifest.size
     )
       throw new Error("Invalid attachment chunk");
-    if (this.locks.has(manifest.hash))
-      throw new Error("This attachment already has an active write");
-    this.locks.add(manifest.hash);
-    try {
-      const expected = await this.resume(manifest, docId);
+    return this.withWrite(manifest, async () => {
+      const expected = await this.resumeLocked(manifest, docId);
       if (expected === manifest.size)
         return { received: expected, complete: true };
       if (expected !== offset) return { received: expected, complete: false };
       const filename = path.join(this.partialDir, manifest.hash + ".part");
       const file = await open(filename, offset ? "r+" : "w", 0o600);
       try {
-        await file.write(bytes, 0, bytes.length, offset);
+        let written = 0;
+        while (written < bytes.length) {
+          const { bytesWritten } = await file.write(
+            bytes,
+            written,
+            bytes.length - written,
+            offset + written,
+          );
+          if (!bytesWritten) throw new Error("Attachment write did not finish");
+          written += bytesWritten;
+        }
         await file.sync();
       } finally {
         await file.close();
@@ -189,33 +211,61 @@ export class CollaborationMedia {
         .prepare("UPDATE collab_downloads SET received=? WHERE hash=?")
         .run(received, manifest.hash);
       if (received !== manifest.size) return { received, complete: false };
-      const buffer = await readFile(filename);
-      if (createHash("sha256").update(buffer).digest("hex") !== manifest.hash) {
-        await unlink(filename);
-        this.service.store.db
-          .prepare("DELETE FROM collab_downloads WHERE hash=?")
-          .run(manifest.hash);
-        throw new Error(
-          "Attachment integrity check failed; it will be downloaded again.",
-        );
-      }
-      // Decode and validate through the same raster/video/EPUB path as imports.
-      const registered = await this.service.assets.add(
-        buffer,
-        manifest.filename,
-        manifest.mime,
-      );
-      await this.local(registered.id);
-      if (docId) this.authorize(docId, manifest);
-      await this.service.assets.remove(registered.id).catch(() => {});
-      await unlink(filename);
+      await this.finalize(manifest, docId);
+      return { received, complete: true };
+    });
+  }
+  async finalize(manifest, docId) {
+    const filename = path.join(this.partialDir, manifest.hash + ".part");
+    const buffer = await readFile(filename);
+    if (
+      buffer.length !== manifest.size ||
+      createHash("sha256").update(buffer).digest("hex") !== manifest.hash
+    ) {
       this.service.store.db
         .prepare("DELETE FROM collab_downloads WHERE hash=?")
         .run(manifest.hash);
-      return { received, complete: true };
-    } finally {
-      this.locks.delete(manifest.hash);
+      await unlink(filename).catch(() => {});
+      throw new Error(
+        "Attachment integrity check failed; it will be downloaded again.",
+      );
     }
+    // Decode and validate through the normal attachment import path.
+    const registered = await this.service.assets.add(
+      buffer,
+      manifest.filename,
+      manifest.mime,
+    );
+    try {
+      await this.local(registered.id);
+      await this.finish(manifest, docId);
+    } finally {
+      await this.service.assets.remove(registered.id).catch(() => {});
+    }
+  }
+  async finish(manifest, docId) {
+    const { db, transaction } = this.service.store;
+    transaction(() => {
+      if (docId) {
+        this.authorize(docId, manifest);
+        db.prepare(
+          `INSERT OR IGNORE INTO asset_refs
+           SELECT elements.board_id,elements.id,? FROM elements
+           JOIN collab_boards ON collab_boards.board_id=elements.board_id
+           WHERE doc_id=? AND (
+             json_extract(content,'$.data.assetId')=? OR
+             json_extract(content,'$.data.thumbnailId')=? OR
+             json_extract(content,'$.data.faviconId')=?
+           )`,
+        ).run(manifest.id, docId, manifest.id, manifest.id, manifest.id);
+      }
+      db.prepare("DELETE FROM collab_downloads WHERE hash=?").run(
+        manifest.hash,
+      );
+    });
+    await unlink(path.join(this.partialDir, manifest.hash + ".part")).catch(
+      () => {},
+    );
   }
   async read(manifest, offset, docId) {
     manifest = manifestSchema.parse(manifest);
